@@ -260,7 +260,7 @@
         <h1>Quản Lý Link Truyền Dẫn — Chạy Chính / DP1 / DP2</h1>
         <span class="sync-pill" id="syncStatus">Đang kết nối...</span>
       </div>
-      <div style="font-size: 0.82rem; opacity: 0.9;">Đồng bộ trực tuyến qua Cloud Firestore • Đa trạm & ODF • Lịch sử & Backup JSON/CSV</div>
+      <div style="font-size: 0.82rem; opacity: 0.9;">Đồng bộ trực tuyến Firebase • Đa trạm & ODF • Lịch sử & Backup JSON/CSV</div>
     </div>
     <div class="user-bar" id="userBar"></div>
   </header>
@@ -406,10 +406,18 @@
       writeBatch,
       onSnapshot
     } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+    import {
+      getDatabase,
+      ref,
+      set,
+      remove,
+      onValue
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDf5rXne7nLpL7J8u5Tc7N-bbzf2DU_wz4",
       authDomain: "web-chia-se-du-lieu.firebaseapp.com",
+      databaseURL: "https://web-chia-se-du-lieu-default-rtdb.asia-southeast1.firebasedatabase.app",
       projectId: "web-chia-se-du-lieu",
       storageBucket: "web-chia-se-du-lieu.firebasestorage.app",
       messagingSenderId: "634125897634",
@@ -417,7 +425,7 @@
       measurementId: "G-CJ1DN5KMT4"
     };
 
-    const COLLECTION_NAME = "transmission_links";
+    const NODE_NAME = "transmission_links";
     const ROUTE_LABELS = {
       MAIN: "Chạy chính",
       DP1: "Phương án DP1",
@@ -427,8 +435,10 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+    const rtdb = getDatabase(app);
 
-    let unsubscribeSnapshot = null;
+    let backendMode = "firestore"; // "firestore" | "rtdb"
+    let unsubscribeStream = null;
     let currentUser = null;
     let linksCache = [];
     let draftRoutes = { MAIN: [], DP1: [], DP2: [] };
@@ -461,39 +471,43 @@
       return currentUser.email || (currentUser.isAnonymous ? "Khách trạm" : "user");
     }
 
-    async function upsertLinkRecord(linkObj) {
-      await setDoc(doc(db, COLLECTION_NAME, linkObj.id), linkObj);
-    }
-
-    async function deleteLinkRecord(linkId) {
-      await deleteDoc(doc(db, COLLECTION_NAME, linkId));
-    }
-
-    async function replaceAllLinksRecord(newList) {
-      const batch = writeBatch(db);
-      const existingIds = new Set(linksCache.map(l => l.id));
-      const nextIds = new Set(newList.map(l => l.id));
-
-      existingIds.forEach(oldId => {
-        if (!nextIds.has(oldId)) {
-          batch.delete(doc(db, COLLECTION_NAME, oldId));
+    function startRtdbSync() {
+      if (unsubscribeStream) {
+        unsubscribeStream();
+        unsubscribeStream = null;
+      }
+      backendMode = "rtdb";
+      setSyncBadge("Đang đồng bộ Realtime DB", true);
+      const dbRef = ref(rtdb, NODE_NAME);
+      unsubscribeStream = onValue(
+        dbRef,
+        (snap) => {
+          const val = snap.val();
+          const rows = val
+            ? Object.entries(val).map(([k, v]) => ({ id: k, ...v }))
+            : [];
+          rows.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+          linksCache = rows;
+          renderLinks();
+        },
+        (err) => {
+          console.error(err);
+          setSyncBadge("Lỗi đồng bộ Firebase", false);
+          showToast("Lỗi đồng bộ Realtime DB: " + err.message);
         }
-      });
-      newList.forEach(item => {
-        batch.set(doc(db, COLLECTION_NAME, item.id), item);
-      });
-      await batch.commit();
+      );
     }
 
     function startRealtimeSync() {
-      if (unsubscribeSnapshot) {
-        unsubscribeSnapshot();
-        unsubscribeSnapshot = null;
+      if (unsubscribeStream) {
+        unsubscribeStream();
+        unsubscribeStream = null;
       }
 
+      backendMode = "firestore";
       setSyncBadge("Đang đồng bộ Firestore", true);
-      const colRef = collection(db, COLLECTION_NAME);
-      unsubscribeSnapshot = onSnapshot(
+      const colRef = collection(db, NODE_NAME);
+      unsubscribeStream = onSnapshot(
         colRef,
         (snap) => {
           const rows = [];
@@ -503,11 +517,65 @@
           renderLinks();
         },
         (err) => {
-          console.error(err);
-          setSyncBadge("Lỗi đồng bộ Firestore", false);
-          showToast("Lỗi đồng bộ Firestore: " + err.message);
+          console.warn("Firestore listener fallback to RTDB:", err);
+          startRtdbSync();
         }
       );
+    }
+
+    async function upsertLinkRecord(linkObj) {
+      if (backendMode === "rtdb") {
+        await set(ref(rtdb, `${NODE_NAME}/${linkObj.id}`), linkObj);
+        return;
+      }
+      try {
+        await setDoc(doc(db, NODE_NAME, linkObj.id), linkObj);
+      } catch (err) {
+        startRtdbSync();
+        await set(ref(rtdb, `${NODE_NAME}/${linkObj.id}`), linkObj);
+      }
+    }
+
+    async function deleteLinkRecord(linkId) {
+      if (backendMode === "rtdb") {
+        await remove(ref(rtdb, `${NODE_NAME}/${linkId}`));
+        return;
+      }
+      try {
+        await deleteDoc(doc(db, NODE_NAME, linkId));
+      } catch (err) {
+        startRtdbSync();
+        await remove(ref(rtdb, `${NODE_NAME}/${linkId}`));
+      }
+    }
+
+    async function replaceAllLinksRecord(newList) {
+      if (backendMode === "rtdb") {
+        const obj = {};
+        newList.forEach(item => { obj[item.id] = item; });
+        await set(ref(rtdb, NODE_NAME), obj);
+        return;
+      }
+      try {
+        const batch = writeBatch(db);
+        const existingIds = new Set(linksCache.map(l => l.id));
+        const nextIds = new Set(newList.map(l => l.id));
+
+        existingIds.forEach(oldId => {
+          if (!nextIds.has(oldId)) {
+            batch.delete(doc(db, NODE_NAME, oldId));
+          }
+        });
+        newList.forEach(item => {
+          batch.set(doc(db, NODE_NAME, item.id), item);
+        });
+        await batch.commit();
+      } catch (err) {
+        startRtdbSync();
+        const obj = {};
+        newList.forEach(item => { obj[item.id] = item; });
+        await set(ref(rtdb, NODE_NAME), obj);
+      }
     }
 
     function renderAuthUI() {
@@ -519,9 +587,9 @@
         userBar.innerHTML = "";
         loginView.style.display = "block";
         appView.style.display = "none";
-        if (unsubscribeSnapshot) {
-          unsubscribeSnapshot();
-          unsubscribeSnapshot = null;
+        if (unsubscribeStream) {
+          unsubscribeStream();
+          unsubscribeStream = null;
         }
       } else {
         const label = getActorName();
@@ -685,7 +753,7 @@
     function exportToJson() {
       const payload = {
         exportedAt: new Date().toISOString(),
-        version: "2.1-firestore",
+        version: "2.2-firebase",
         totalLinks: linksCache.length,
         links: linksCache
       };
@@ -1111,7 +1179,7 @@
       expandedHistoryIds.add(targetId);
       await upsertLinkRecord(payload);
       closeModal();
-      showToast("Đã lưu và đồng bộ thông tin link lên Firestore.");
+      showToast("Đã lưu và đồng bộ thông tin link.");
     };
 
     onAuthStateChanged(auth, (user) => {
