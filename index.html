@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quản Lý Link Truyền Dẫn & Phương Án DP1 / DP2</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --text: #1e293b;
+      --muted: #64748b;
+      --primary: #0f4c81;
+      --primary-hover: #09355c;
+      --border: #e2e8f0;
+      --main-bg: #dcfce7;
+      --main-fg: #166534;
+      --dp1-bg: #fef3c7;
+      --dp1-fg: #92400e;
+      --dp2-bg: #fee2e2;
+      --dp2-fg: #991b1b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    .sync-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      margin-left: 8px;
+    }
+    .user-bar { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; flex-wrap: wrap; }
+    .container { max-width: 1180px; margin: 24px auto; padding: 0 16px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .toolbar-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    input, select, button, textarea {
+      font-family: inherit;
+      font-size: 0.92rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+    }
+    input[type="text"], input[type="email"], input[type="password"], textarea {
+      background: #fff;
+      color: var(--text);
+    }
+    .search-box { flex: 1; min-width: 240px; }
+    button {
+      cursor: pointer;
+      background: #fff;
+      color: var(--text);
+      font-weight: 500;
+      transition: 0.15s;
+    }
+    button:hover { background: #f1f5f9; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.btn-primary {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    button.btn-primary:hover { background: var(--primary-hover); }
+    button.btn-secondary {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      color: #0f172a;
+    }
+    button.btn-secondary:hover { background: #e2e8f0; }
+    button.btn-danger { color: #b91c1c; border-color: #fecaca; background: #fff5f5; }
+    button.btn-sm { padding: 5px 10px; font-size: 0.85rem; }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+    .badge-MAIN { background: var(--main-bg); color: var(--main-fg); }
+    .badge-DP1 { background: var(--dp1-bg); color: var(--dp1-fg); }
+    .badge-DP2 { background: var(--dp2-bg); color: var(--dp2-fg); }
+
+    .link-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 14px;
+      background: #fff;
+    }
+    .link-card.is-active-route { border-left: 5px solid var(--primary); }
+    .link-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .link-title { font-size: 1.1rem; font-weight: 700; margin: 0 0 4px 0; }
+    .link-meta { font-size: 0.9rem; color: var(--muted); }
+    .link-note {
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      color: #78350f;
+    }
+
+    .routes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .route-box {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fafbfc;
+    }
+    .route-box.active-box {
+      background: #f0f9ff;
+      border-color: #7dd3fc;
+    }
+    .route-box-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .hop-item {
+      border-left: 2px solid #cbd5e1;
+      padding-left: 10px;
+      margin-bottom: 8px;
+      font-size: 0.88rem;
+    }
+    .hop-item:last-child { margin-bottom: 0; }
+    .hop-cable { color: var(--primary); font-size: 0.82rem; margin-top: 2px; }
+    .hop-note { color: var(--muted); font-size: 0.82rem; font-style: italic; margin-top: 2px; }
+
+    .history-panel {
+      margin-top: 12px;
+      border-top: 1px dashed var(--border);
+      padding-top: 10px;
+    }
+    .history-list {
+      margin-top: 8px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.86rem;
+    }
+    .history-item {
+      padding: 6px 0;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .history-item:last-child { border-bottom: none; }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.5);
+      display: none;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 30px 16px;
+      overflow-y: auto;
+      z-index: 50;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 12px;
+      max-width: 980px;
+      width: 100%;
+      padding: 22px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+    }
+    .modal-sm { max-width: 520px; }
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; }
+    .hop-editor-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr auto;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    @media (max-width: 850px) {
+      .hop-editor-row { grid-template-columns: 1fr; }
+    }
+    .login-box { max-width: 440px; margin: 50px auto; }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #0f172a;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+      display: none;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div style="display:flex; align-items:center; flex-wrap:wrap;">
+        <h1>Quản Lý Link Truyền Dẫn — Chạy Chính / DP1 / DP2</h1>
+        <span class="sync-pill" id="syncStatus">Đang kết nối...</span>
+      </div>
+      <div style="font-size: 0.82rem; opacity: 0.9;">Đồng bộ trực tuyến qua Cloud Firestore • Đa trạm & ODF • Lịch sử & Backup JSON/CSV</div>
+    </div>
+    <div class="user-bar" id="userBar"></div>
+  </header>
+
+  <div id="loginView" class="container" style="display:none;">
+    <div class="card login-box">
+      <h2 style="margin-top:0;">Đăng nhập hệ thống</h2>
+      <p style="font-size:0.9rem; color:var(--muted);">
+        Đăng nhập tài khoản để xem, ghi chú và cập nhật trạng thái chuyển đổi phương án đồng bộ giữa các trạm.
+      </p>
+      <form id="loginForm">
+        <div style="margin-bottom:12px;">
+          <label>Email / Tên đăng nhập</label>
+          <input type="text" id="loginUser" style="width:100%;" placeholder="vd: tram.xuanmai@vnpt.vn" required />
+        </div>
+        <div style="margin-bottom:14px;">
+          <label>Mật khẩu</label>
+          <input type="password" id="loginPass" style="width:100%;" placeholder="••••••••" />
+        </div>
+        <button type="submit" class="btn-primary" style="width:100%;">Đăng nhập</button>
+      </form>
+      <div id="anonLoginWrap" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+        <button type="button" class="btn-secondary" id="btnAnonLogin" style="width:100%;">Vào nhanh chế độ khách trạm (Anonymous)</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="appView" class="container" style="display:none;">
+    <div class="card toolbar">
+      <input type="text" id="searchInput" class="search-box" placeholder="Tìm kiếm theo tên link, hướng truyền hoặc ghi chú..." />
+      <select id="filterRoute">
+        <option value="ALL">Tất cả trạng thái đang chạy</option>
+        <option value="MAIN">Đang chạy Chính</option>
+        <option value="DP1">Đang chạy DP1</option>
+        <option value="DP2">Đang chạy DP2</option>
+      </select>
+      <div class="toolbar-group">
+        <button type="button" class="btn-secondary" id="btnExportJson" title="Sao lưu toàn bộ dữ liệu kèm lịch sử">Xuất JSON</button>
+        <button type="button" class="btn-secondary" id="btnExportCsv" title="Xuất bảng dữ liệu mở bằng Excel">Xuất CSV</button>
+        <button type="button" class="btn-secondary" id="btnOpenImport" title="Khôi phục hoặc nạp dữ liệu từ file JSON/CSV">Nhập file</button>
+        <button type="button" class="btn-primary" id="btnOpenCreate">+ Thêm Link mới</button>
+      </div>
+    </div>
+
+    <div id="linksList">
+      <div class="card" style="text-align:center; color:var(--muted);">Đang tải dữ liệu từ hệ thống...</div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="linkModal">
+    <div class="modal">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+        <h2 id="modalTitle" style="margin:0;">Thêm Link mới</h2>
+        <button type="button" id="btnCloseModal">Đóng</button>
+      </div>
+      <form id="linkForm">
+        <input type="hidden" id="editLinkId" />
+        <div class="form-row">
+          <div>
+            <label>Tên Link *</label>
+            <input type="text" id="linkName" style="width:100%;" placeholder="vd: Link DWDM Hà Nội - Xuân Mai" required />
+          </div>
+          <div>
+            <label>Hướng truyền *</label>
+            <input type="text" id="linkDirection" style="width:100%;" placeholder="vd: Đài VT Hà Nội ↔ Trạm Xuân Mai" required />
+          </div>
+          <div>
+            <label>Phương án đang hoạt động</label>
+            <select id="activeRoute" style="width:100%;">
+              <option value="MAIN">Chạy chính</option>
+              <option value="DP1">Phương án DP1</option>
+              <option value="DP2">Phương án DP2</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label>Ghi chú chung của Link</label>
+            <input type="text" id="linkNote" style="width:100%;" placeholder="vd: Đang theo dõi suy hao tuyến cáp trục QL6..." />
+          </div>
+          <div>
+            <label>Lý do / Ghi chú thay đổi (ghi vào lịch sử)</label>
+            <input type="text" id="changeReason" style="width:100%;" placeholder="vd: Khởi tạo link / Chuyển dự phòng do thi công mở rộng đường..." />
+          </div>
+        </div>
+
+        <div id="routeEditors"></div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+          <button type="button" id="btnCancelModal">Hủy</button>
+          <button type="submit" class="btn-primary">Lưu Link</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="importModal">
+    <div class="modal modal-sm">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 style="margin:0; font-size:1.15rem;">Nhập dữ liệu từ file JSON / CSV</h2>
+        <button type="button" id="btnCloseImport">Đóng</button>
+      </div>
+      <p style="font-size:0.88rem; color:var(--muted); margin-top:0;">
+        Chọn file <strong>.json</strong> (backup đầy đủ) hoặc <strong>.csv</strong> (xuất từ hệ thống / Excel) để nạp danh sách link.
+      </p>
+      <div style="margin-bottom:12px;">
+        <label>Chọn file dữ liệu (.json hoặc .csv)</label>
+        <input type="file" id="importFileInput" accept=".json,.csv,text/csv,application/json" style="width:100%;" />
+      </div>
+      <div style="margin-bottom:16px;">
+        <label>Chế độ nhập dữ liệu</label>
+        <select id="importMode" style="width:100%;">
+          <option value="MERGE">Gộp & Cập nhật (thêm link mới, cập nhật link trùng tên)</option>
+          <option value="REPLACE">Ghi đè toàn bộ (thay thế danh sách hiện tại bằng file nhập)</option>
+        </select>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" id="btnCancelImport">Hủy</button>
+        <button type="button" class="btn-primary" id="btnConfirmImport">Tiến hành nhập</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import {
+      getAuth,
+      onAuthStateChanged,
+      signInWithEmailAndPassword,
+      createUserWithEmailAndPassword,
+      signInAnonymously,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+    import {
+      getFirestore,
+      collection,
+      doc,
+      setDoc,
+      deleteDoc,
+      writeBatch,
+      onSnapshot
+    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDf5rXne7nLpL7J8u5Tc7N-bbzf2DU_wz4",
+      authDomain: "web-chia-se-du-lieu.firebaseapp.com",
+      projectId: "web-chia-se-du-lieu",
+      storageBucket: "web-chia-se-du-lieu.firebasestorage.app",
+      messagingSenderId: "634125897634",
+      appId: "1:634125897634:web:63d4a55c80f39f74396cfb",
+      measurementId: "G-CJ1DN5KMT4"
+    };
+
+    const COLLECTION_NAME = "transmission_links";
+    const ROUTE_LABELS = {
+      MAIN: "Chạy chính",
+      DP1: "Phương án DP1",
+      DP2: "Phương án DP2"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    let unsubscribeSnapshot = null;
+    let currentUser = null;
+    let linksCache = [];
+    let draftRoutes = { MAIN: [], DP1: [], DP2: [] };
+    let expandedHistoryIds = new Set();
+
+    function showToast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.style.display = "block";
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => { el.style.display = "none"; }, 3200);
+    }
+
+    function setSyncBadge(text, isLive) {
+      const el = document.getElementById("syncStatus");
+      el.textContent = text;
+      el.style.background = isLive ? "rgba(34, 197, 94, 0.28)" : "rgba(255, 255, 255, 0.16)";
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function getActorName() {
+      if (!currentUser) return "system";
+      return currentUser.email || (currentUser.isAnonymous ? "Khách trạm" : "user");
+    }
+
+    async function upsertLinkRecord(linkObj) {
+      await setDoc(doc(db, COLLECTION_NAME, linkObj.id), linkObj);
+    }
+
+    async function deleteLinkRecord(linkId) {
+      await deleteDoc(doc(db, COLLECTION_NAME, linkId));
+    }
+
+    async function replaceAllLinksRecord(newList) {
+      const batch = writeBatch(db);
+      const existingIds = new Set(linksCache.map(l => l.id));
+      const nextIds = new Set(newList.map(l => l.id));
+
+      existingIds.forEach(oldId => {
+        if (!nextIds.has(oldId)) {
+          batch.delete(doc(db, COLLECTION_NAME, oldId));
+        }
+      });
+      newList.forEach(item => {
+        batch.set(doc(db, COLLECTION_NAME, item.id), item);
+      });
+      await batch.commit();
+    }
+
+    function startRealtimeSync() {
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = null;
+      }
+
+      setSyncBadge("Đang đồng bộ Firestore", true);
+      const colRef = collection(db, COLLECTION_NAME);
+      unsubscribeSnapshot = onSnapshot(
+        colRef,
+        (snap) => {
+          const rows = [];
+          snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+          rows.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+          linksCache = rows;
+          renderLinks();
+        },
+        (err) => {
+          console.error(err);
+          setSyncBadge("Lỗi đồng bộ Firestore", false);
+          showToast("Lỗi đồng bộ Firestore: " + err.message);
+        }
+      );
+    }
+
+    function renderAuthUI() {
+      const userBar = document.getElementById("userBar");
+      const loginView = document.getElementById("loginView");
+      const appView = document.getElementById("appView");
+
+      if (!currentUser) {
+        userBar.innerHTML = "";
+        loginView.style.display = "block";
+        appView.style.display = "none";
+        if (unsubscribeSnapshot) {
+          unsubscribeSnapshot();
+          unsubscribeSnapshot = null;
+        }
+      } else {
+        const label = getActorName();
+        userBar.innerHTML = `
+          <span>Tài khoản: <strong>${escapeHtml(label)}</strong></span>
+          <button type="button" class="btn-sm" id="btnLogout">Đăng xuất</button>
+        `;
+        document.getElementById("btnLogout").onclick = async () => {
+          await signOut(auth);
+        };
+        loginView.style.display = "none";
+        appView.style.display = "block";
+        startRealtimeSync();
+      }
+    }
+
+    document.getElementById("loginForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const idVal = document.getElementById("loginUser").value.trim();
+      const passVal = document.getElementById("loginPass").value;
+      if (!idVal) return;
+
+      try {
+        await signInWithEmailAndPassword(auth, idVal, passVal);
+      } catch (err) {
+        if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential") {
+          const shouldCreate = confirm(
+            "Tài khoản chưa tồn tại hoặc thông tin chưa khớp. Bạn có muốn đăng ký mới tài khoản email này để nhập thử không?"
+          );
+          if (shouldCreate && passVal.length >= 6) {
+            try {
+              await createUserWithEmailAndPassword(auth, idVal, passVal);
+            } catch (regErr) {
+              alert("Đăng ký thất bại: " + regErr.message);
+            }
+          } else if (shouldCreate) {
+            alert("Mật khẩu cần ít nhất 6 ký tự để tạo tài khoản mới.");
+          }
+        } else {
+          alert("Lỗi đăng nhập: " + err.message);
+        }
+      }
+    };
+
+    document.getElementById("btnAnonLogin").onclick = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        alert("Không thể đăng nhập khách (hãy bật Anonymous trong Firebase Authentication): " + err.message);
+      }
+    };
+
+    function renderLinks() {
+      const q = document.getElementById("searchInput").value.trim().toLowerCase();
+      const filterRoute = document.getElementById("filterRoute").value;
+      const listEl = document.getElementById("linksList");
+
+      const filtered = linksCache.filter(item => {
+        const matchText =
+          String(item.linkName || "").toLowerCase().includes(q) ||
+          String(item.direction || "").toLowerCase().includes(q) ||
+          String(item.note || "").toLowerCase().includes(q);
+        const matchRoute = filterRoute === "ALL" || item.activeRoute === filterRoute;
+        return matchText && matchRoute;
+      });
+
+      if (!filtered.length) {
+        listEl.innerHTML = `<div class="card" style="text-align:center; color:var(--muted);">Chưa có link hoặc không tìm thấy link phù hợp.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(link => {
+        const routeOrder = ["MAIN", "DP1", "DP2"];
+        const history = link.switchHistory || [];
+        const isHistOpen = expandedHistoryIds.has(link.id);
+        const activeKey = ["MAIN", "DP1", "DP2"].includes(link.activeRoute) ? link.activeRoute : "MAIN";
+
+        return `
+          <div class="link-card is-active-route">
+            <div class="link-header">
+              <div>
+                <h3 class="link-title">${escapeHtml(link.linkName)}</h3>
+                <div class="link-meta">
+                  <strong>Hướng truyền:</strong> ${escapeHtml(link.direction)} •
+                  Cập nhật: ${escapeHtml(link.updatedAt || "")} (${escapeHtml(link.updatedBy || "")})
+                </div>
+                ${link.note ? `<div class="link-note"><strong>Ghi chú:</strong> ${escapeHtml(link.note)}</div>` : ""}
+              </div>
+              <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                <span class="badge badge-${activeKey}">Đang hoạt động: ${ROUTE_LABELS[activeKey]}</span>
+                <select onchange="quickSwitchRoute('${link.id}', this.value, this)" title="Chuyển nhanh phương án đang chạy">
+                  <option value="MAIN" ${activeKey === "MAIN" ? "selected" : ""}>Chuyển sang: Chạy chính</option>
+                  <option value="DP1" ${activeKey === "DP1" ? "selected" : ""}>Chuyển sang: DP1</option>
+                  <option value="DP2" ${activeKey === "DP2" ? "selected" : ""}>Chuyển sang: DP2</option>
+                </select>
+                <button type="button" class="btn-sm" onclick="openEditModal('${link.id}')">Sửa</button>
+                <button type="button" class="btn-sm btn-danger" onclick="deleteLink('${link.id}')">Xóa</button>
+              </div>
+            </div>
+
+            <div class="routes-grid">
+              ${routeOrder.map(rKey => {
+                const hops = (link.routes && link.routes[rKey]) || [];
+                const isAct = activeKey === rKey;
+                return `
+                  <div class="route-box ${isAct ? "active-box" : ""}">
+                    <div class="route-box-head">
+                      <span>${ROUTE_LABELS[rKey]}</span>
+                      ${isAct ? `<span class="badge badge-${rKey}">Đang chạy</span>` : ""}
+                    </div>
+                    ${hops.length ? hops.map((h, idx) => `
+                      <div class="hop-item">
+                        <div><strong>Trạm ${idx + 1}:</strong> ${escapeHtml(h.station)}</div>
+                        <div><strong>Vị trí ODF:</strong> ${escapeHtml(h.odf)}</div>
+                        ${h.cable ? `<div class="hop-cable">↳ Tuyến cáp: ${escapeHtml(h.cable)}</div>` : ""}
+                        ${h.note ? `<div class="hop-note">Ghi chú: ${escapeHtml(h.note)}</div>` : ""}
+                      </div>
+                    `).join("") : `<div style="color:var(--muted); font-size:0.85rem;">Chưa khai báo trạm</div>`}
+                  </div>
+                `;
+              }).join("")}
+            </div>
+
+            <div class="history-panel">
+              <button type="button" class="btn-sm" onclick="toggleHistory('${link.id}')">
+                ${isHistOpen ? "Ẩn lịch sử chuyển đổi" : "Xem lịch sử chuyển đổi"} (${history.length})
+              </button>
+              ${isHistOpen ? `
+                <div class="history-list">
+                  ${history.length ? history.map(h => `
+                    <div class="history-item">
+                      <div><strong>${escapeHtml(h.time)}</strong> • <em>${escapeHtml(h.user)}</em> — <strong>${escapeHtml(h.summary)}</strong></div>
+                      ${h.reason ? `<div style="color:var(--muted);">Lý do / Ghi chú: ${escapeHtml(h.reason)}</div>` : ""}
+                    </div>
+                  `).join("") : `<div style="color:var(--muted);">Chưa có lịch sử chuyển đổi.</div>`}
+                </div>
+              ` : ""}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function getTimestampTag() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, "0");
+      return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+    }
+
+    function exportToJson() {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: "2.1-firestore",
+        totalLinks: linksCache.length,
+        links: linksCache
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+      downloadBlob(blob, `backup_links_${getTimestampTag()}.json`);
+      showToast(`Đã xuất ${linksCache.length} link ra file JSON.`);
+    }
+
+    function csvEscape(val) {
+      const s = String(val ?? "");
+      if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    }
+
+    function exportToCsv() {
+      const headers = [
+        "Ten_Link", "Huong_Truyen", "Phuong_An_Dang_Chay", "Ghi_Chu_Link",
+        "Loai_Phuong_An", "Thu_Tu_Tram", "Ten_Tram", "Vi_Tri_ODF", "Tuyen_Cap",
+        "Ghi_Chu_Tram", "Nguoi_Cap_Nhat", "Thoi_Gian_Cap_Nhat"
+      ];
+      const rows = [headers.join(",")];
+
+      linksCache.forEach(link => {
+        ["MAIN", "DP1", "DP2"].forEach(rKey => {
+          const hops = (link.routes && link.routes[rKey]) || [];
+          if (!hops.length) {
+            rows.push([
+              link.linkName, link.direction, link.activeRoute, link.note || "",
+              rKey, "", "", "", "", "", link.updatedBy || "", link.updatedAt || ""
+            ].map(csvEscape).join(","));
+          } else {
+            hops.forEach((h, idx) => {
+              rows.push([
+                link.linkName, link.direction, link.activeRoute, link.note || "",
+                rKey, idx + 1, h.station || "", h.odf || "", h.cable || "", h.note || "",
+                link.updatedBy || "", link.updatedAt || ""
+              ].map(csvEscape).join(","));
+            });
+          }
+        });
+      });
+
+      const blob = new Blob(["\uFEFF" + rows.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      downloadBlob(blob, `danh_sach_links_${getTimestampTag()}.csv`);
+      showToast(`Đã xuất ${linksCache.length} link ra file CSV.`);
+    }
+
+    function parseCsvText(text) {
+      const clean = text.replace(/^\uFEFF/, "");
+      const rows = [];
+      let row = [];
+      let cur = "";
+      let inQuotes = false;
+      for (let i = 0; i < clean.length; i++) {
+        const ch = clean[i];
+        const next = clean[i + 1];
+        if (inQuotes) {
+          if (ch === '"' && next === '"') { cur += '"'; i++; }
+          else if (ch === '"') { inQuotes = false; }
+          else { cur += ch; }
+        } else {
+          if (ch === '"') { inQuotes = true; }
+          else if (ch === ",") { row.push(cur); cur = ""; }
+          else if (ch === "\r" && next === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; i++; }
+          else if (ch === "\n" || ch === "\r") { row.push(cur); rows.push(row); row = []; cur = ""; }
+          else { cur += ch; }
+        }
+      }
+      if (cur.length > 0 || row.length > 0) { row.push(cur); rows.push(row); }
+      return rows.filter(r => r.some(cell => cell.trim() !== ""));
+    }
+
+    function normalizeImportedLinks(rawList, actor) {
+      const nowStr = new Date().toLocaleString("vi-VN");
+      return rawList
+        .filter(item => item && String(item.linkName || "").trim())
+        .map((item, index) => {
+          const validActive = ["MAIN", "DP1", "DP2"].includes(item.activeRoute) ? item.activeRoute : "MAIN";
+          const routes = { MAIN: [], DP1: [], DP2: [] };
+          ["MAIN", "DP1", "DP2"].forEach(k => {
+            const arr = (item.routes && Array.isArray(item.routes[k])) ? item.routes[k] : [];
+            routes[k] = arr.map(h => ({
+              station: String(h.station || "").trim(),
+              odf: String(h.odf || "").trim(),
+              cable: String(h.cable || "").trim(),
+              note: String(h.note || "").trim()
+            }));
+          });
+          return {
+            id: String(item.id || `lnk-${Date.now()}-${index}`),
+            linkName: String(item.linkName).trim(),
+            direction: String(item.direction || "").trim(),
+            activeRoute: validActive,
+            note: String(item.note || "").trim(),
+            updatedBy: item.updatedBy || actor,
+            updatedAt: item.updatedAt || nowStr,
+            routes,
+            switchHistory: Array.isArray(item.switchHistory) && item.switchHistory.length
+              ? item.switchHistory
+              : [{
+                  time: nowStr,
+                  user: actor,
+                  fromRoute: null,
+                  toRoute: validActive,
+                  summary: `Nhập dữ liệu từ file (${ROUTE_LABELS[validActive]})`,
+                  reason: "Import file backup"
+                }]
+          };
+        });
+    }
+
+    function csvRowsToLinks(rows, actor) {
+      if (rows.length < 2) return [];
+      const headers = rows[0].map(h => h.trim());
+      const idx = name => headers.indexOf(name);
+      const mapByLinkName = new Map();
+      const nowStr = new Date().toLocaleString("vi-VN");
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const linkName = (r[idx("Ten_Link")] || "").trim();
+        if (!linkName) continue;
+
+        if (!mapByLinkName.has(linkName)) {
+          const rawActive = (r[idx("Phuong_An_Dang_Chay")] || "MAIN").trim().toUpperCase();
+          const activeRoute = ["MAIN", "DP1", "DP2"].includes(rawActive) ? rawActive : "MAIN";
+          mapByLinkName.set(linkName, {
+            id: `lnk-${Date.now()}-${mapByLinkName.size}`,
+            linkName,
+            direction: (r[idx("Huong_Truyen")] || "").trim(),
+            activeRoute,
+            note: (r[idx("Ghi_Chu_Link")] || "").trim(),
+            updatedBy: (r[idx("Nguoi_Cap_Nhat")] || actor).trim(),
+            updatedAt: (r[idx("Thoi_Gian_Cap_Nhat")] || nowStr).trim(),
+            routes: { MAIN: [], DP1: [], DP2: [] },
+            switchHistory: [{
+              time: nowStr,
+              user: actor,
+              fromRoute: null,
+              toRoute: activeRoute,
+              summary: `Nhập từ file CSV (${ROUTE_LABELS[activeRoute]})`,
+              reason: "Import CSV"
+            }]
+          });
+        }
+
+        const entry = mapByLinkName.get(linkName);
+        const routeType = (r[idx("Loai_Phuong_An")] || "").trim().toUpperCase();
+        const station = (r[idx("Ten_Tram")] || "").trim();
+        const odf = (r[idx("Vi_Tri_ODF")] || "").trim();
+        const cable = (r[idx("Tuyen_Cap")] || "").trim();
+        const hopNote = (r[idx("Ghi_Chu_Tram")] || "").trim();
+
+        if (["MAIN", "DP1", "DP2"].includes(routeType) && (station || odf || cable || hopNote)) {
+          entry.routes[routeType].push({ station, odf, cable, note: hopNote });
+        }
+      }
+      return Array.from(mapByLinkName.values());
+    }
+
+    async function handleImportConfirm() {
+      const fileInput = document.getElementById("importFileInput");
+      const mode = document.getElementById("importMode").value;
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        alert("Vui lòng chọn một file .json hoặc .csv trước khi nhập.");
+        return;
+      }
+
+      const actor = getActorName();
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const text = String(reader.result || "");
+          let importedLinks = [];
+          if (file.name.toLowerCase().endsWith(".json")) {
+            const parsed = JSON.parse(text);
+            const list = Array.isArray(parsed) ? parsed : parsed.links;
+            if (!Array.isArray(list)) throw new Error("Cấu trúc JSON không hợp lệ.");
+            importedLinks = normalizeImportedLinks(list, actor);
+          } else {
+            const rows = parseCsvText(text);
+            importedLinks = csvRowsToLinks(rows, actor);
+          }
+
+          if (!importedLinks.length) {
+            alert("Không tìm thấy bản ghi link hợp lệ trong file.");
+            return;
+          }
+
+          if (mode === "REPLACE") {
+            await replaceAllLinksRecord(importedLinks);
+          } else {
+            const byName = new Map(linksCache.map(item => [item.linkName.toLowerCase(), item]));
+            importedLinks.forEach(imp => {
+              const key = imp.linkName.toLowerCase();
+              if (byName.has(key)) {
+                const old = byName.get(key);
+                byName.set(key, {
+                  ...imp,
+                  id: old.id,
+                  switchHistory: [
+                    {
+                      time: new Date().toLocaleString("vi-VN"),
+                      user: actor,
+                      fromRoute: old.activeRoute,
+                      toRoute: imp.activeRoute,
+                      summary: `Cập nhật từ file nhập (${ROUTE_LABELS[imp.activeRoute]})`,
+                      reason: `Gộp dữ liệu từ ${file.name}`
+                    },
+                    ...(old.switchHistory || [])
+                  ]
+                });
+              } else {
+                byName.set(key, imp);
+              }
+            });
+            await replaceAllLinksRecord(Array.from(byName.values()));
+          }
+
+          document.getElementById("importModal").classList.remove("open");
+          fileInput.value = "";
+          showToast(`Đã nhập ${importedLinks.length} link từ ${file.name}.`);
+        } catch (err) {
+          alert("Lỗi đọc file: " + err.message);
+        }
+      };
+      reader.readAsText(file, "UTF-8");
+    }
+
+    window.toggleHistory = function(linkId) {
+      if (expandedHistoryIds.has(linkId)) expandedHistoryIds.delete(linkId);
+      else expandedHistoryIds.add(linkId);
+      renderLinks();
+    };
+
+    window.quickSwitchRoute = async function(linkId, newRoute, selectEl) {
+      const link = linksCache.find(l => l.id === linkId);
+      if (!link || link.activeRoute === newRoute) return;
+
+      const reason = prompt(
+        `Chuyển link "${link.linkName}" từ ${ROUTE_LABELS[link.activeRoute]} sang ${ROUTE_LABELS[newRoute]}.\nNhập lý do / ghi chú chuyển đổi (có thể bỏ trống):`,
+        ""
+      );
+      if (reason === null) {
+        selectEl.value = link.activeRoute;
+        return;
+      }
+
+      const nowStr = new Date().toLocaleString("vi-VN");
+      const actor = getActorName();
+      const updated = {
+        ...link,
+        activeRoute: newRoute,
+        updatedBy: actor,
+        updatedAt: nowStr,
+        switchHistory: [
+          {
+            time: nowStr,
+            user: actor,
+            fromRoute: link.activeRoute,
+            toRoute: newRoute,
+            summary: `Chuyển từ ${ROUTE_LABELS[link.activeRoute]} → ${ROUTE_LABELS[newRoute]}`,
+            reason: reason.trim()
+          },
+          ...(link.switchHistory || [])
+        ]
+      };
+
+      expandedHistoryIds.add(linkId);
+      await upsertLinkRecord(updated);
+      showToast(`Đã chuyển "${link.linkName}" sang ${ROUTE_LABELS[newRoute]}.`);
+    };
+
+    window.deleteLink = async function(linkId) {
+      if (!confirm("Bạn có chắc muốn xóa link này khỏi hệ thống?")) return;
+      await deleteLinkRecord(linkId);
+      showToast("Đã xóa link.");
+    };
+
+    function renderRouteEditors() {
+      const container = document.getElementById("routeEditors");
+      container.innerHTML = ["MAIN", "DP1", "DP2"].map(rKey => {
+        const hops = draftRoutes[rKey] || [];
+        return `
+          <div class="card" style="padding:14px; margin-bottom:12px; background:#fafbfc;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <strong>${ROUTE_LABELS[rKey]} (Danh sách trạm, ODF, Tuyến cáp & Ghi chú)</strong>
+              <button type="button" class="btn-sm" onclick="addHop('${rKey}')">+ Thêm trạm</button>
+            </div>
+            ${hops.map((h, idx) => `
+              <div class="hop-editor-row">
+                <input type="text" placeholder="Tên trạm ${idx + 1}" value="${escapeHtml(h.station)}"
+                  onchange="updateHop('${rKey}', ${idx}, 'station', this.value)" required />
+                <input type="text" placeholder="Vị trí ODF tại trạm" value="${escapeHtml(h.odf)}"
+                  onchange="updateHop('${rKey}', ${idx}, 'odf', this.value)" required />
+                <input type="text" placeholder="Tuyến cáp (nối tiếp / chặng)" value="${escapeHtml(h.cable)}"
+                  onchange="updateHop('${rKey}', ${idx}, 'cable', this.value)" />
+                <input type="text" placeholder="Ghi chú trạm / ODF" value="${escapeHtml(h.note || "")}"
+                  onchange="updateHop('${rKey}', ${idx}, 'note', this.value)" />
+                <button type="button" class="btn-sm btn-danger" onclick="removeHop('${rKey}', ${idx})">Xóa</button>
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }).join("");
+    }
+
+    window.addHop = function(rKey) {
+      draftRoutes[rKey].push({ station: "", odf: "", cable: "", note: "" });
+      renderRouteEditors();
+    };
+
+    window.updateHop = function(rKey, idx, field, val) {
+      draftRoutes[rKey][idx][field] = val;
+    };
+
+    window.removeHop = function(rKey, idx) {
+      draftRoutes[rKey].splice(idx, 1);
+      renderRouteEditors();
+    };
+
+    function openCreateModal() {
+      document.getElementById("modalTitle").textContent = "Thêm Link mới";
+      document.getElementById("editLinkId").value = "";
+      document.getElementById("linkName").value = "";
+      document.getElementById("linkDirection").value = "";
+      document.getElementById("activeRoute").value = "MAIN";
+      document.getElementById("linkNote").value = "";
+      document.getElementById("changeReason").value = "Khởi tạo link mới";
+      draftRoutes = {
+        MAIN: [{ station: "", odf: "", cable: "", note: "" }],
+        DP1: [{ station: "", odf: "", cable: "", note: "" }],
+        DP2: [{ station: "", odf: "", cable: "", note: "" }]
+      };
+      renderRouteEditors();
+      document.getElementById("linkModal").classList.add("open");
+    }
+
+    window.openEditModal = function(linkId) {
+      const link = linksCache.find(l => l.id === linkId);
+      if (!link) return;
+      document.getElementById("modalTitle").textContent = "Cập nhật Link";
+      document.getElementById("editLinkId").value = link.id;
+      document.getElementById("linkName").value = link.linkName;
+      document.getElementById("linkDirection").value = link.direction;
+      document.getElementById("activeRoute").value = link.activeRoute || "MAIN";
+      document.getElementById("linkNote").value = link.note || "";
+      document.getElementById("changeReason").value = "";
+      draftRoutes = JSON.parse(JSON.stringify(link.routes || { MAIN: [], DP1: [], DP2: [] }));
+      renderRouteEditors();
+      document.getElementById("linkModal").classList.add("open");
+    };
+
+    function closeModal() {
+      document.getElementById("linkModal").classList.remove("open");
+    }
+
+    document.getElementById("btnOpenCreate").onclick = openCreateModal;
+    document.getElementById("btnCloseModal").onclick = closeModal;
+    document.getElementById("btnCancelModal").onclick = closeModal;
+    document.getElementById("btnExportJson").onclick = exportToJson;
+    document.getElementById("btnExportCsv").onclick = exportToCsv;
+    document.getElementById("btnOpenImport").onclick = () => document.getElementById("importModal").classList.add("open");
+    document.getElementById("btnCloseImport").onclick = () => document.getElementById("importModal").classList.remove("open");
+    document.getElementById("btnCancelImport").onclick = () => document.getElementById("importModal").classList.remove("open");
+    document.getElementById("btnConfirmImport").onclick = handleImportConfirm;
+    document.getElementById("searchInput").oninput = renderLinks;
+    document.getElementById("filterRoute").onchange = renderLinks;
+
+    document.getElementById("linkForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const actor = getActorName();
+      const nowStr = new Date().toLocaleString("vi-VN");
+      const editId = document.getElementById("editLinkId").value;
+      const newActiveRoute = document.getElementById("activeRoute").value;
+      const reason = document.getElementById("changeReason").value.trim();
+      const existing = linksCache.find(l => l.id === editId);
+
+      let history = existing ? [...(existing.switchHistory || [])] : [];
+      if (!existing) {
+        history.unshift({
+          time: nowStr,
+          user: actor,
+          fromRoute: null,
+          toRoute: newActiveRoute,
+          summary: `Khởi tạo link trên ${ROUTE_LABELS[newActiveRoute]}`,
+          reason: reason || "Tạo mới link"
+        });
+      } else if (existing.activeRoute !== newActiveRoute) {
+        history.unshift({
+          time: nowStr,
+          user: actor,
+          fromRoute: existing.activeRoute,
+          toRoute: newActiveRoute,
+          summary: `Chuyển từ ${ROUTE_LABELS[existing.activeRoute]} → ${ROUTE_LABELS[newRoute]}`,
+          reason: reason || "Cập nhật phương án hoạt động"
+        });
+      } else if (reason) {
+        history.unshift({
+          time: nowStr,
+          user: actor,
+          fromRoute: existing.activeRoute,
+          toRoute: newActiveRoute,
+          summary: `Cập nhật thông tin (giữ ${ROUTE_LABELS[newActiveRoute]})`,
+          reason
+        });
+      }
+
+      const targetId = editId || ("lnk-" + Date.now());
+      const payload = {
+        id: targetId,
+        linkName: document.getElementById("linkName").value.trim(),
+        direction: document.getElementById("linkDirection").value.trim(),
+        activeRoute: newActiveRoute,
+        note: document.getElementById("linkNote").value.trim(),
+        updatedBy: actor,
+        updatedAt: nowStr,
+        routes: draftRoutes,
+        switchHistory: history
+      };
+
+      expandedHistoryIds.add(targetId);
+      await upsertLinkRecord(payload);
+      closeModal();
+      showToast("Đã lưu và đồng bộ thông tin link lên Firestore.");
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      currentUser = user;
+      renderAuthUI();
+    });
+  </script>
+</body>
+</html>
