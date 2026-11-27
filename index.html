@@ -260,7 +260,7 @@
         <h1>Quản Lý Link Truyền Dẫn — Chạy Chính / DP1 / DP2</h1>
         <span class="sync-pill" id="syncStatus">Đang kết nối...</span>
       </div>
-      <div style="font-size: 0.82rem; opacity: 0.9;">Đồng bộ trực tuyến Firebase • Đa trạm & ODF • Lịch sử & Backup JSON/CSV</div>
+      <div style="font-size: 0.82rem; opacity: 0.9;">Đồng bộ trực tuyến qua Cloud Firestore • Đa trạm & ODF • Lịch sử & Backup JSON/CSV</div>
     </div>
     <div class="user-bar" id="userBar"></div>
   </header>
@@ -290,7 +290,7 @@
 
   <div id="appView" class="container" style="display:none;">
     <div class="card toolbar">
-      <input type="text" id="searchInput" class="search-box" placeholder="Tìm kiếm theo tên link, hệ thống hoặc ghi chú..." />
+      <input type="text" id="searchInput" class="search-box" placeholder="Tìm kiếm theo tên link, hướng truyền, hệ thống hoặc ghi chú..." />
       <select id="filterSystem" title="Lọc link theo hệ thống">
         <option value="ALL">Tất cả hệ thống</option>
       </select>
@@ -324,7 +324,11 @@
         <div class="form-row">
           <div>
             <label>Tên Link *</label>
-            <input type="text" id="linkName" style="width:100%;" placeholder="vd: Link 100G Hà Nội - Xuân Mai" required />
+            <input type="text" id="linkName" style="width:100%;" placeholder="vd: Link DWDM Hà Nội - Xuân Mai" required />
+          </div>
+          <div>
+            <label>Hướng truyền *</label>
+            <input type="text" id="linkDirection" style="width:100%;" placeholder="vd: Đài VT Hà Nội ↔ Trạm Xuân Mai" required />
           </div>
           <div>
             <label>Hệ thống *</label>
@@ -350,11 +354,11 @@
         <div class="form-row">
           <div>
             <label>Ghi chú chung của Link</label>
-            <input type="text" id="linkNote" style="width:100%;" placeholder="vd: Đang theo dõi suy hao tuyến cáp trục..." />
+            <input type="text" id="linkNote" style="width:100%;" placeholder="vd: Đang theo dõi suy hao tuyến cáp trục QL6..." />
           </div>
           <div>
             <label>Lý do / Ghi chú thay đổi (ghi vào lịch sử)</label>
-            <input type="text" id="changeReason" style="width:100%;" placeholder="vd: Khởi tạo link / Chuyển dự phòng do sự cố..." />
+            <input type="text" id="changeReason" style="width:100%;" placeholder="vd: Khởi tạo link / Chuyển dự phòng do thi công mở rộng đường..." />
           </div>
         </div>
 
@@ -416,18 +420,10 @@
       writeBatch,
       onSnapshot
     } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-    import {
-      getDatabase,
-      ref,
-      set,
-      remove,
-      onValue
-    } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDf5rXne7nLpL7J8u5Tc7N-bbzf2DU_wz4",
       authDomain: "web-chia-se-du-lieu.firebaseapp.com",
-      databaseURL: "https://web-chia-se-du-lieu-default-rtdb.asia-southeast1.firebasedatabase.app",
       projectId: "web-chia-se-du-lieu",
       storageBucket: "web-chia-se-du-lieu.firebasestorage.app",
       messagingSenderId: "634125897634",
@@ -435,7 +431,7 @@
       measurementId: "G-CJ1DN5KMT4"
     };
 
-    const NODE_NAME = "transmission_links";
+    const COLLECTION_NAME = "transmission_links";
     const ROUTE_LABELS = {
       MAIN: "Chạy chính",
       DP1: "Phương án DP1",
@@ -445,10 +441,8 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
-    const rtdb = getDatabase(app);
 
-    let backendMode = "firestore";
-    let unsubscribeStream = null;
+    let unsubscribeSnapshot = null;
     let currentUser = null;
     let linksCache = [];
     let draftRoutes = { MAIN: [], DP1: [], DP2: [] };
@@ -477,7 +471,7 @@
     }
 
     function getLinkSystem(item) {
-      return String(item.system ?? item.direction ?? "").trim();
+      return String(item.system || "").trim();
     }
 
     function getActorName() {
@@ -503,44 +497,39 @@
       }
     }
 
-    function startRtdbSync() {
-      if (unsubscribeStream) {
-        unsubscribeStream();
-        unsubscribeStream = null;
-      }
-      backendMode = "rtdb";
-      setSyncBadge("Đang đồng bộ Realtime DB", true);
-      const dbRef = ref(rtdb, NODE_NAME);
-      unsubscribeStream = onValue(
-        dbRef,
-        (snap) => {
-          const val = snap.val();
-          const rows = val
-            ? Object.entries(val).map(([k, v]) => ({ id: k, ...v }))
-            : [];
-          rows.sort((a, b) => String(b.id).localeCompare(String(a.id)));
-          linksCache = rows;
-          refreshSystemFilterOptions();
-          renderLinks();
-        },
-        (err) => {
-          console.error(err);
-          setSyncBadge("Lỗi đồng bộ Firebase", false);
-          showToast("Lỗi đồng bộ Realtime DB: " + err.message);
+    async function upsertLinkRecord(linkObj) {
+      await setDoc(doc(db, COLLECTION_NAME, linkObj.id), linkObj);
+    }
+
+    async function deleteLinkRecord(linkId) {
+      await deleteDoc(doc(db, COLLECTION_NAME, linkId));
+    }
+
+    async function replaceAllLinksRecord(newList) {
+      const batch = writeBatch(db);
+      const existingIds = new Set(linksCache.map(l => l.id));
+      const nextIds = new Set(newList.map(l => l.id));
+
+      existingIds.forEach(oldId => {
+        if (!nextIds.has(oldId)) {
+          batch.delete(doc(db, COLLECTION_NAME, oldId));
         }
-      );
+      });
+      newList.forEach(item => {
+        batch.set(doc(db, COLLECTION_NAME, item.id), item);
+      });
+      await batch.commit();
     }
 
     function startRealtimeSync() {
-      if (unsubscribeStream) {
-        unsubscribeStream();
-        unsubscribeStream = null;
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = null;
       }
 
-      backendMode = "firestore";
       setSyncBadge("Đang đồng bộ Firestore", true);
-      const colRef = collection(db, NODE_NAME);
-      unsubscribeStream = onSnapshot(
+      const colRef = collection(db, COLLECTION_NAME);
+      unsubscribeSnapshot = onSnapshot(
         colRef,
         (snap) => {
           const rows = [];
@@ -550,65 +539,12 @@
           refreshSystemFilterOptions();
           renderLinks();
         },
-        () => {
-          startRtdbSync();
+        (err) => {
+          console.error(err);
+          setSyncBadge("Lỗi đồng bộ Firestore", false);
+          showToast("Lỗi đồng bộ Firestore: " + err.message);
         }
       );
-    }
-
-    async function upsertLinkRecord(linkObj) {
-      if (backendMode === "rtdb") {
-        await set(ref(rtdb, `${NODE_NAME}/${linkObj.id}`), linkObj);
-        return;
-      }
-      try {
-        await setDoc(doc(db, NODE_NAME, linkObj.id), linkObj);
-      } catch (err) {
-        startRtdbSync();
-        await set(ref(rtdb, `${NODE_NAME}/${linkObj.id}`), linkObj);
-      }
-    }
-
-    async function deleteLinkRecord(linkId) {
-      if (backendMode === "rtdb") {
-        await remove(ref(rtdb, `${NODE_NAME}/${linkId}`));
-        return;
-      }
-      try {
-        await deleteDoc(doc(db, NODE_NAME, linkId));
-      } catch (err) {
-        startRtdbSync();
-        await remove(ref(rtdb, `${NODE_NAME}/${linkId}`));
-      }
-    }
-
-    async function replaceAllLinksRecord(newList) {
-      if (backendMode === "rtdb") {
-        const obj = {};
-        newList.forEach(item => { obj[item.id] = item; });
-        await set(ref(rtdb, NODE_NAME), obj);
-        return;
-      }
-      try {
-        const batch = writeBatch(db);
-        const existingIds = new Set(linksCache.map(l => l.id));
-        const nextIds = new Set(newList.map(l => l.id));
-
-        existingIds.forEach(oldId => {
-          if (!nextIds.has(oldId)) {
-            batch.delete(doc(db, NODE_NAME, oldId));
-          }
-        });
-        newList.forEach(item => {
-          batch.set(doc(db, NODE_NAME, item.id), item);
-        });
-        await batch.commit();
-      } catch (err) {
-        startRtdbSync();
-        const obj = {};
-        newList.forEach(item => { obj[item.id] = item; });
-        await set(ref(rtdb, NODE_NAME), obj);
-      }
     }
 
     function renderAuthUI() {
@@ -620,9 +556,9 @@
         userBar.innerHTML = "";
         loginView.style.display = "block";
         appView.style.display = "none";
-        if (unsubscribeStream) {
-          unsubscribeStream();
-          unsubscribeStream = null;
+        if (unsubscribeSnapshot) {
+          unsubscribeSnapshot();
+          unsubscribeSnapshot = null;
         }
       } else {
         const label = getActorName();
@@ -685,6 +621,7 @@
         const sysVal = getLinkSystem(item);
         const matchText =
           String(item.linkName || "").toLowerCase().includes(q) ||
+          String(item.direction || "").toLowerCase().includes(q) ||
           sysVal.toLowerCase().includes(q) ||
           String(item.note || "").toLowerCase().includes(q);
         const matchSystem = filterSystem === "ALL" || sysVal === filterSystem;
@@ -710,7 +647,8 @@
               <div>
                 <h3 class="link-title">${escapeHtml(link.linkName)}</h3>
                 <div class="link-meta">
-                  <strong>Hệ thống:</strong> ${escapeHtml(sysLabel)} •
+                  <strong>Hướng truyền:</strong> ${escapeHtml(link.direction)}
+                  ${sysLabel ? ` • <strong>Hệ thống:</strong> ${escapeHtml(sysLabel)}` : ""} •
                   Cập nhật: ${escapeHtml(link.updatedAt || "")} (${escapeHtml(link.updatedBy || "")})
                 </div>
                 ${link.note ? `<div class="link-note"><strong>Ghi chú:</strong> ${escapeHtml(link.note)}</div>` : ""}
@@ -734,7 +672,8 @@
                 return `
                   <div class="route-box ${isAct ? "active-box" : ""}">
                     <div class="route-box-head">
-                      <span>${ROUTE_LABELS[rKey]}</span>${isAct ? `<span class="badge badge-${rKey}">Đang chạy</span>` : ""}
+                      <span>${ROUTE_LABELS[rKey]}</span>
+                      ${isAct ? `<span class="badge badge-${rKey}">Đang chạy</span>` : ""}
                     </div>
                     ${hops.length ? hops.map((h, idx) => `
                       <div class="hop-item">
@@ -789,7 +728,7 @@
     function exportToJson() {
       const payload = {
         exportedAt: new Date().toISOString(),
-        version: "2.3-system",
+        version: "2.2-firestore-system",
         totalLinks: linksCache.length,
         links: linksCache
       };
@@ -806,7 +745,7 @@
 
     function exportToCsv() {
       const headers = [
-        "Ten_Link", "He_Thong", "Phuong_An_Dang_Chay", "Ghi_Chu_Link",
+        "Ten_Link", "Huong_Truyen", "He_Thong", "Phuong_An_Dang_Chay", "Ghi_Chu_Link",
         "Loai_Phuong_An", "Thu_Tu_Tram", "Ten_Tram", "Vi_Tri_ODF", "Tuyen_Cap",
         "Ghi_Chu_Tram", "Nguoi_Cap_Nhat", "Thoi_Gian_Cap_Nhat"
       ];
@@ -818,11 +757,418 @@
           const hops = (link.routes && link.routes[rKey]) || [];
           if (!hops.length) {
             rows.push([
-              link.linkName, sysVal, link.activeRoute, link.note || "",
+              link.linkName, link.direction, sysVal, link.activeRoute, link.note || "",
               rKey, "", "", "", "", "", link.updatedBy || "", link.updatedAt || ""
             ].map(csvEscape).join(","));
           } else {
             hops.forEach((h, idx) => {
               rows.push([
-                link.linkName, sysVal, link.activeRoute, link.note || "",
-                rKey
+                link.linkName, link.direction, sysVal, link.activeRoute, link.note || "",
+                rKey, idx + 1, h.station || "", h.odf || "", h.cable || "", h.note || "",
+                link.updatedBy || "", link.updatedAt || ""
+              ].map(csvEscape).join(","));
+            });
+          }
+        });
+      });
+
+      const blob = new Blob(["\uFEFF" + rows.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      downloadBlob(blob, `danh_sach_links_${getTimestampTag()}.csv`);
+      showToast(`Đã xuất ${linksCache.length} link ra file CSV.`);
+    }
+
+    function parseCsvText(text) {
+      const clean = text.replace(/^\uFEFF/, "");
+      const rows = [];
+      let row = [];
+      let cur = "";
+      let inQuotes = false;
+      for (let i = 0; i < clean.length; i++) {
+        const ch = clean[i];
+        const next = clean[i + 1];
+        if (inQuotes) {
+          if (ch === '"' && next === '"') { cur += '"'; i++; }
+          else if (ch === '"') { inQuotes = false; }
+          else { cur += ch; }
+        } else {
+          if (ch === '"') { inQuotes = true; }
+          else if (ch === ",") { row.push(cur); cur = ""; }
+          else if (ch === "\r" && next === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; i++; }
+          else if (ch === "\n" || ch === "\r") { row.push(cur); rows.push(row); row = []; cur = ""; }
+          else { cur += ch; }
+        }
+      }
+      if (cur.length > 0 || row.length > 0) { row.push(cur); rows.push(row); }
+      return rows.filter(r => r.some(cell => cell.trim() !== ""));
+    }
+
+    function normalizeImportedLinks(rawList, actor) {
+      const nowStr = new Date().toLocaleString("vi-VN");
+      return rawList
+        .filter(item => item && String(item.linkName || "").trim())
+        .map((item, index) => {
+          const validActive = ["MAIN", "DP1", "DP2"].includes(item.activeRoute) ? item.activeRoute : "MAIN";
+          const routes = { MAIN: [], DP1: [], DP2: [] };
+          ["MAIN", "DP1", "DP2"].forEach(k => {
+            const arr = (item.routes && Array.isArray(item.routes[k])) ? item.routes[k] : [];
+            routes[k] = arr.map(h => ({
+              station: String(h.station || "").trim(),
+              odf: String(h.odf || "").trim(),
+              cable: String(h.cable || "").trim(),
+              note: String(h.note || "").trim()
+            }));
+          });
+          return {
+            id: String(item.id || `lnk-${Date.now()}-${index}`),
+            linkName: String(item.linkName).trim(),
+            direction: String(item.direction || "").trim(),
+            system: getLinkSystem(item),
+            activeRoute: validActive,
+            note: String(item.note || "").trim(),
+            updatedBy: item.updatedBy || actor,
+            updatedAt: item.updatedAt || nowStr,
+            routes,
+            switchHistory: Array.isArray(item.switchHistory) && item.switchHistory.length
+              ? item.switchHistory
+              : [{
+                  time: nowStr,
+                  user: actor,
+                  fromRoute: null,
+                  toRoute: validActive,
+                  summary: `Nhập dữ liệu từ file (${ROUTE_LABELS[validActive]})`,
+                  reason: "Import file backup"
+                }]
+          };
+        });
+    }
+
+    function csvRowsToLinks(rows, actor) {
+      if (rows.length < 2) return [];
+      const headers = rows[0].map(h => h.trim());
+      const idx = name => headers.indexOf(name);
+      const mapByLinkName = new Map();
+      const nowStr = new Date().toLocaleString("vi-VN");
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const linkName = (r[idx("Ten_Link")] || "").trim();
+        if (!linkName) continue;
+
+        if (!mapByLinkName.has(linkName)) {
+          const rawActive = (r[idx("Phuong_An_Dang_Chay")] || "MAIN").trim().toUpperCase();
+          const activeRoute = ["MAIN", "DP1", "DP2"].includes(rawActive) ? rawActive : "MAIN";
+          const sysCol = idx("He_Thong");
+          mapByLinkName.set(linkName, {
+            id: `lnk-${Date.now()}-${mapByLinkName.size}`,
+            linkName,
+            direction: (r[idx("Huong_Truyen")] || "").trim(),
+            system: sysCol >= 0 ? (r[sysCol] || "").trim() : "",
+            activeRoute,
+            note: (r[idx("Ghi_Chu_Link")] || "").trim(),
+            updatedBy: (r[idx("Nguoi_Cap_Nhat")] || actor).trim(),
+            updatedAt: (r[idx("Thoi_Gian_Cap_Nhat")] || nowStr).trim(),
+            routes: { MAIN: [], DP1: [], DP2: [] },
+            switchHistory: [{
+              time: nowStr,
+              user: actor,
+              fromRoute: null,
+              toRoute: activeRoute,
+              summary: `Nhập từ file CSV (${ROUTE_LABELS[activeRoute]})`,
+              reason: "Import CSV"
+            }]
+          });
+        }
+
+        const entry = mapByLinkName.get(linkName);
+        const routeType = (r[idx("Loai_Phuong_An")] || "").trim().toUpperCase();
+        const station = (r[idx("Ten_Tram")] || "").trim();
+        const odf = (r[idx("Vi_Tri_ODF")] || "").trim();
+        const cable = (r[idx("Tuyen_Cap")] || "").trim();
+        const hopNote = (r[idx("Ghi_Chu_Tram")] || "").trim();
+
+        if (["MAIN", "DP1", "DP2"].includes(routeType) && (station || odf || cable || hopNote)) {
+          entry.routes[routeType].push({ station, odf, cable, note: hopNote });
+        }
+      }
+      return Array.from(mapByLinkName.values());
+    }
+
+    async function handleImportConfirm() {
+      const fileInput = document.getElementById("importFileInput");
+      const mode = document.getElementById("importMode").value;
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        alert("Vui lòng chọn một file .json hoặc .csv trước khi nhập.");
+        return;
+      }
+
+      const actor = getActorName();
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const text = String(reader.result || "");
+          let importedLinks = [];
+          if (file.name.toLowerCase().endsWith(".json")) {
+            const parsed = JSON.parse(text);
+            const list = Array.isArray(parsed) ? parsed : parsed.links;
+            if (!Array.isArray(list)) throw new Error("Cấu trúc JSON không hợp lệ.");
+            importedLinks = normalizeImportedLinks(list, actor);
+          } else {
+            const rows = parseCsvText(text);
+            importedLinks = csvRowsToLinks(rows, actor);
+          }
+
+          if (!importedLinks.length) {
+            alert("Không tìm thấy bản ghi link hợp lệ trong file.");
+            return;
+          }
+
+          if (mode === "REPLACE") {
+            await replaceAllLinksRecord(importedLinks);
+          } else {
+            const byName = new Map(linksCache.map(item => [item.linkName.toLowerCase(), item]));
+            importedLinks.forEach(imp => {
+              const key = imp.linkName.toLowerCase();
+              if (byName.has(key)) {
+                const old = byName.get(key);
+                byName.set(key, {
+                  ...imp,
+                  id: old.id,
+                  switchHistory: [
+                    {
+                      time: new Date().toLocaleString("vi-VN"),
+                      user: actor,
+                      fromRoute: old.activeRoute,
+                      toRoute: imp.activeRoute,
+                      summary: `Cập nhật từ file nhập (${ROUTE_LABELS[imp.activeRoute]})`,
+                      reason: `Gộp dữ liệu từ ${file.name}`
+                    },
+                    ...(old.switchHistory || [])
+                  ]
+                });
+              } else {
+                byName.set(key, imp);
+              }
+            });
+            await replaceAllLinksRecord(Array.from(byName.values()));
+          }
+
+          document.getElementById("importModal").classList.remove("open");
+          fileInput.value = "";
+          showToast(`Đã nhập ${importedLinks.length} link từ ${file.name}.`);
+        } catch (err) {
+          alert("Lỗi đọc file: " + err.message);
+        }
+      };
+      reader.readAsText(file, "UTF-8");
+    }
+
+    window.toggleHistory = function(linkId) {
+      if (expandedHistoryIds.has(linkId)) expandedHistoryIds.delete(linkId);
+      else expandedHistoryIds.add(linkId);
+      renderLinks();
+    };
+
+    window.quickSwitchRoute = async function(linkId, newRoute, selectEl) {
+      const link = linksCache.find(l => l.id === linkId);
+      if (!link || link.activeRoute === newRoute) return;
+
+      const reason = prompt(
+        `Chuyển link "${link.linkName}" từ ${ROUTE_LABELS[link.activeRoute]} sang ${ROUTE_LABELS[newRoute]}.\nNhập lý do / ghi chú chuyển đổi (có thể bỏ trống):`,
+        ""
+      );
+      if (reason === null) {
+        selectEl.value = link.activeRoute;
+        return;
+      }
+
+      const nowStr = new Date().toLocaleString("vi-VN");
+      const actor = getActorName();
+      const updated = {
+        ...link,
+        activeRoute: newRoute,
+        updatedBy: actor,
+        updatedAt: nowStr,
+        switchHistory: [
+          {
+            time: nowStr,
+            user: actor,
+            fromRoute: link.activeRoute,
+            toRoute: newRoute,
+            summary: `Chuyển từ ${ROUTE_LABELS[link.activeRoute]} → ${ROUTE_LABELS[newRoute]}`,
+            reason: reason.trim()
+          },
+          ...(link.switchHistory || [])
+        ]
+      };
+
+      expandedHistoryIds.add(linkId);
+      await upsertLinkRecord(updated);
+      showToast(`Đã chuyển "${link.linkName}" sang ${ROUTE_LABELS[newRoute]}.`);
+    };
+
+    window.deleteLink = async function(linkId) {
+      if (!confirm("Bạn có chắc muốn xóa link này khỏi hệ thống?")) return;
+      await deleteLinkRecord(linkId);
+      showToast("Đã xóa link.");
+    };
+
+    function renderRouteEditors() {
+      const container = document.getElementById("routeEditors");
+      container.innerHTML = ["MAIN", "DP1", "DP2"].map(rKey => {
+        const hops = draftRoutes[rKey] || [];
+        return `
+          <div class="card" style="padding:14px; margin-bottom:12px; background:#fafbfc;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <strong>${ROUTE_LABELS[rKey]} (Danh sách trạm, ODF, Tuyến cáp & Ghi chú)</strong>
+              <button type="button" class="btn-sm" onclick="addHop('${rKey}')">+ Thêm trạm</button>
+            </div>
+            ${hops.map((h, idx) => `
+              <div class="hop-editor-row">
+                <input type="text" placeholder="Tên trạm ${idx + 1}" value="${escapeHtml(h.station)}"
+                  onchange="updateHop('${rKey}', ${idx}, 'station', this.value)" required />
+                <input type="text" placeholder="Vị trí ODF tại trạm" value="${escapeHtml(h.odf)}"
+                  onchange="updateHop('${rKey}', ${idx}, 'odf', this.value)" required />
+                <input type="text" placeholder="Tuyến cáp (nối tiếp / chặng)" value="${escapeHtml(h.cable)}"
+                  onchange="updateHop('${rKey}', ${idx}, 'cable', this.value)" />
+                <input type="text" placeholder="Ghi chú trạm / ODF" value="${escapeHtml(h.note || "")}"
+                  onchange="updateHop('${rKey}', ${idx}, 'note', this.value)" />
+                <button type="button" class="btn-sm btn-danger" onclick="removeHop('${rKey}', ${idx})">Xóa</button>
+              </div>
+            `).join("")}
+          </div>
+        `;
+      }).join("");
+    }
+
+    window.addHop = function(rKey) {
+      draftRoutes[rKey].push({ station: "", odf: "", cable: "", note: "" });
+      renderRouteEditors();
+    };
+
+    window.updateHop = function(rKey, idx, field, val) {
+      draftRoutes[rKey][idx][field] = val;
+    };
+
+    window.removeHop = function(rKey, idx) {
+      draftRoutes[rKey].splice(idx, 1);
+      renderRouteEditors();
+    };
+
+    function openCreateModal() {
+      document.getElementById("modalTitle").textContent = "Thêm Link mới";
+      document.getElementById("editLinkId").value = "";
+      document.getElementById("linkName").value = "";
+      document.getElementById("linkDirection").value = "";
+      document.getElementById("linkSystem").value = "";
+      document.getElementById("activeRoute").value = "MAIN";
+      document.getElementById("linkNote").value = "";
+      document.getElementById("changeReason").value = "Khởi tạo link mới";
+      draftRoutes = {
+        MAIN: [{ station: "", odf: "", cable: "", note: "" }],
+        DP1: [{ station: "", odf: "", cable: "", note: "" }],
+        DP2: [{ station: "", odf: "", cable: "", note: "" }]
+      };
+      renderRouteEditors();
+      document.getElementById("linkModal").classList.add("open");
+    }
+
+    window.openEditModal = function(linkId) {
+      const link = linksCache.find(l => l.id === linkId);
+      if (!link) return;
+      document.getElementById("modalTitle").textContent = "Cập nhật Link";
+      document.getElementById("editLinkId").value = link.id;
+      document.getElementById("linkName").value = link.linkName;
+      document.getElementById("linkDirection").value = link.direction;
+      document.getElementById("linkSystem").value = getLinkSystem(link);
+      document.getElementById("activeRoute").value = link.activeRoute || "MAIN";
+      document.getElementById("linkNote").value = link.note || "";
+      document.getElementById("changeReason").value = "";
+      draftRoutes = JSON.parse(JSON.stringify(link.routes || { MAIN: [], DP1: [], DP2: [] }));
+      renderRouteEditors();
+      document.getElementById("linkModal").classList.add("open");
+    };
+
+    function closeModal() {
+      document.getElementById("linkModal").classList.remove("open");
+    }
+
+    document.getElementById("btnOpenCreate").onclick = openCreateModal;
+    document.getElementById("btnCloseModal").onclick = closeModal;
+    document.getElementById("btnCancelModal").onclick = closeModal;
+    document.getElementById("btnExportJson").onclick = exportToJson;
+    document.getElementById("btnExportCsv").onclick = exportToCsv;
+    document.getElementById("btnOpenImport").onclick = () => document.getElementById("importModal").classList.add("open");
+    document.getElementById("btnCloseImport").onclick = () => document.getElementById("importModal").classList.remove("open");
+    document.getElementById("btnCancelImport").onclick = () => document.getElementById("importModal").classList.remove("open");
+    document.getElementById("btnConfirmImport").onclick = handleImportConfirm;
+    document.getElementById("searchInput").oninput = renderLinks;
+    document.getElementById("filterSystem").onchange = renderLinks;
+    document.getElementById("filterRoute").onchange = renderLinks;
+
+    document.getElementById("linkForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const actor = getActorName();
+      const nowStr = new Date().toLocaleString("vi-VN");
+      const editId = document.getElementById("editLinkId").value;
+      const newActiveRoute = document.getElementById("activeRoute").value;
+      const reason = document.getElementById("changeReason").value.trim();
+      const existing = linksCache.find(l => l.id === editId);
+
+      let history = existing ? [...(existing.switchHistory || [])] : [];
+      if (!existing) {
+        history.unshift({
+          time: nowStr,
+          user: actor,
+          fromRoute: null,
+          toRoute: newActiveRoute,
+          summary: `Khởi tạo link trên ${ROUTE_LABELS[newActiveRoute]}`,
+          reason: reason || "Tạo mới link"
+        });
+      } else if (existing.activeRoute !== newActiveRoute) {
+        history.unshift({
+          time: nowStr,
+          user: actor,
+          fromRoute: existing.activeRoute,
+          toRoute: newActiveRoute,
+          summary: `Chuyển từ ${ROUTE_LABELS[existing.activeRoute]} → ${ROUTE_LABELS[newRoute]}`,
+          reason: reason || "Cập nhật phương án hoạt động"
+        });
+      } else if (reason) {
+        history.unshift({
+          time: nowStr,
+          user: actor,
+          fromRoute: existing.activeRoute,
+          toRoute: newActiveRoute,
+          summary: `Cập nhật thông tin (giữ ${ROUTE_LABELS[newActiveRoute]})`,
+          reason
+        });
+      }
+
+      const targetId = editId || ("lnk-" + Date.now());
+      const payload = {
+        id: targetId,
+        linkName: document.getElementById("linkName").value.trim(),
+        direction: document.getElementById("linkDirection").value.trim(),
+        system: document.getElementById("linkSystem").value.trim(),
+        activeRoute: newActiveRoute,
+        note: document.getElementById("linkNote").value.trim(),
+        updatedBy: actor,
+        updatedAt: nowStr,
+        routes: draftRoutes,
+        switchHistory: history
+      };
+
+      expandedHistoryIds.add(targetId);
+      await upsertLinkRecord(payload);
+      closeModal();
+      showToast("Đã lưu và đồng bộ thông tin link lên Firestore.");
+    };
+
+    onAuthStateChanged(auth, (user) => {
+      currentUser = user;
+      renderAuthUI();
+    });
+  </script>
+</body>
+</html>
