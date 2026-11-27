@@ -118,6 +118,11 @@
     .badge-MAIN { background: var(--main-bg); color: var(--main-fg); }
     .badge-DP1 { background: var(--dp1-bg); color: var(--dp1-fg); }
     .badge-DP2 { background: var(--dp2-bg); color: var(--dp2-fg); }
+    .badge-impact {
+      background: #fef2f2;
+      color: #991b1b;
+      border: 1px solid #fecaca;
+    }
 
     .link-card {
       border: 1px solid var(--border);
@@ -176,8 +181,15 @@
       margin-bottom: 8px;
       font-size: 0.88rem;
     }
+    .hop-item.hop-impacted {
+      border-left: 3px solid #dc2626;
+      background: #fef2f2;
+      padding: 6px 8px 6px 10px;
+      border-radius: 6px;
+    }
     .hop-item:last-child { margin-bottom: 0; }
     .hop-cable { color: var(--primary); font-size: 0.82rem; margin-top: 2px; }
+    .hop-item.hop-impacted .hop-cable { color: #b91c1c; font-weight: 600; }
     .hop-note { color: var(--muted); font-size: 0.82rem; font-style: italic; margin-top: 2px; }
 
     .history-panel {
@@ -290,7 +302,7 @@
 
   <div id="appView" class="container" style="display:none;">
     <div class="card toolbar">
-      <input type="text" id="searchInput" class="search-box" placeholder="Tìm kiếm theo tên link, hướng truyền, hệ thống hoặc ghi chú..." />
+      <input type="text" id="searchInput" class="search-box" placeholder="Tìm kiếm theo tên link, hướng truyền, hệ thống, tuyến cáp hoặc ghi chú..." />
       <select id="filterSystem" title="Lọc link theo hệ thống">
         <option value="ALL">Tất cả hệ thống</option>
       </select>
@@ -299,6 +311,9 @@
         <option value="MAIN">Đang chạy Chính</option>
         <option value="DP1">Đang chạy DP1</option>
         <option value="DP2">Đang chạy DP2</option>
+      </select>
+      <select id="filterCable" title="Lọc các link đang hoạt động (ảnh hưởng) trên tuyến cáp">
+        <option value="ALL">Tất cả tuyến cáp (không lọc ảnh hưởng)</option>
       </select>
       <div class="toolbar-group">
         <button type="button" class="btn-secondary" id="btnExportJson" title="Sao lưu toàn bộ dữ liệu kèm lịch sử">Xuất JSON</button>
@@ -463,11 +478,63 @@
     }
 
     function escapeHtml(str) {
-      return String(str || "")
+      return String(str ?? "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function getActiveRouteKey(item) {
+      return ["MAIN", "DP1", "DP2"].includes(item && item.activeRoute) ? item.activeRoute : "MAIN";
+    }
+
+    function getActiveHops(item) {
+      const activeKey = getActiveRouteKey(item);
+      const hops = (item && item.routes && Array.isArray(item.routes[activeKey])) ? item.routes[activeKey] : [];
+      return hops;
+    }
+
+    function isLinkAffectedByCable(item, selectedCable) {
+      if (!selectedCable || selectedCable === "ALL") return true;
+      const target = selectedCable.trim().toLowerCase();
+      return getActiveHops(item).some(h => String((h && h.cable) || "").trim().toLowerCase() === target);
+    }
+
+    function normalizeDocRecord(docId, rawData) {
+      const src = (rawData && typeof rawData === "object") ? rawData : {};
+      const validActive = ["MAIN", "DP1", "DP2"].includes(src.activeRoute) ? src.activeRoute : "MAIN";
+      const routes = { MAIN: [], DP1: [], DP2: [] };
+
+      ["MAIN", "DP1", "DP2"].forEach(k => {
+        const list = (src.routes && Array.isArray(src.routes[k])) ? src.routes[k] : [];
+        routes[k] = list.map(h => {
+          const hop = (h && typeof h === "object") ? h : {};
+          return {
+            station: String(hop.station ?? "").trim(),
+            odf: String(hop.odf ?? "").trim(),
+            cable: String(hop.cable ?? "").trim(),
+            note: String(hop.note ?? "").trim()
+          };
+        });
+      });
+
+      const history = Array.isArray(src.switchHistory)
+        ? src.switchHistory.filter(h => h && typeof h === "object")
+        : [];
+
+      return {
+        id: String(src.id || docId),
+        linkName: String(src.linkName ?? "").trim(),
+        direction: String(src.direction ?? "").trim(),
+        system: String(src.system ?? "").trim(),
+        activeRoute: validActive,
+        note: String(src.note ?? "").trim(),
+        updatedBy: String(src.updatedBy ?? "").trim(),
+        updatedAt: String(src.updatedAt ?? "").trim(),
+        routes,
+        switchHistory: history
+      };
     }
 
     function getLinkSystem(item) {
@@ -492,6 +559,36 @@
 
       if (currentVal === "ALL" || systems.includes(currentVal)) {
         selectEl.value = currentVal;
+      } else {
+        selectEl.value = "ALL";
+      }
+    }
+
+    function refreshCableFilterOptions() {
+      const selectEl = document.getElementById("filterCable");
+      if (!selectEl) return;
+      const currentVal = selectEl.value;
+      const cableMap = new Map();
+
+      linksCache.forEach(item => {
+        getActiveHops(item).forEach(h => {
+          const c = String((h && h.cable) || "").trim();
+          if (!c) return;
+          const key = c.toLowerCase();
+          if (!cableMap.has(key)) cableMap.set(key, c);
+        });
+      });
+
+      const cables = Array.from(cableMap.values()).sort((a, b) => a.localeCompare(b, "vi"));
+      selectEl.innerHTML = `<option value="ALL">Tất cả tuyến cáp (không lọc ảnh hưởng)</option>` + cables
+        .map(c => `<option value="${escapeHtml(c)}">Ảnh hưởng tuyến cáp: ${escapeHtml(c)}</option>`)
+        .join("");
+
+      const matchedExisting = cables.find(c => c.toLowerCase() === String(currentVal || "").toLowerCase());
+      if (currentVal === "ALL") {
+        selectEl.value = "ALL";
+      } else if (matchedExisting) {
+        selectEl.value = matchedExisting;
       } else {
         selectEl.value = "ALL";
       }
@@ -533,10 +630,17 @@
         colRef,
         (snap) => {
           const rows = [];
-          snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+          snap.forEach(d => {
+            try {
+              rows.push(normalizeDocRecord(d.id, d.data()));
+            } catch (docErr) {
+              console.warn("Bỏ qua bản ghi lỗi định dạng:", d.id, docErr);
+            }
+          });
           rows.sort((a, b) => String(b.id).localeCompare(String(a.id)));
           linksCache = rows;
           refreshSystemFilterOptions();
+          refreshCableFilterOptions();
           renderLinks();
         },
         (err) => {
@@ -615,30 +719,47 @@
       const q = document.getElementById("searchInput").value.trim().toLowerCase();
       const filterSystem = document.getElementById("filterSystem").value;
       const filterRoute = document.getElementById("filterRoute").value;
+      const filterCable = document.getElementById("filterCable").value;
       const listEl = document.getElementById("linksList");
+      const hasCableFilter = filterCable && filterCable !== "ALL";
+      const cableTargetLower = hasCableFilter ? filterCable.trim().toLowerCase() : "";
 
       const filtered = linksCache.filter(item => {
         const sysVal = getLinkSystem(item);
+        const activeHops = getActiveHops(item);
+        const matchCableText = activeHops.some(h => String((h && h.cable) || "").toLowerCase().includes(q));
         const matchText =
+          !q ||
           String(item.linkName || "").toLowerCase().includes(q) ||
           String(item.direction || "").toLowerCase().includes(q) ||
           sysVal.toLowerCase().includes(q) ||
-          String(item.note || "").toLowerCase().includes(q);
+          String(item.note || "").toLowerCase().includes(q) ||
+          matchCableText;
         const matchSystem = filterSystem === "ALL" || sysVal === filterSystem;
         const matchRoute = filterRoute === "ALL" || item.activeRoute === filterRoute;
-        return matchText && matchSystem && matchRoute;
+        const matchAffectedCable = isLinkAffectedByCable(item, filterCable);
+        return matchText && matchSystem && matchRoute && matchAffectedCable;
       });
 
       if (!filtered.length) {
-        listEl.innerHTML = `<div class="card" style="text-align:center; color:var(--muted);">Chưa có link hoặc không tìm thấy link phù hợp.</div>`;
+        const emptyMsg = hasCableFilter
+          ? `Không có link nào đang hoạt động trên tuyến cáp "${escapeHtml(filterCable)}".`
+          : "Chưa có link hoặc không tìm thấy link phù hợp.";
+        listEl.innerHTML = `<div class="card" style="text-align:center; color:var(--muted);">${emptyMsg}</div>`;
         return;
       }
 
-      listEl.innerHTML = filtered.map(link => {
+      const summaryBanner = hasCableFilter
+        ? `<div class="card" style="padding:12px 16px; margin-bottom:14px; background:#fef2f2; border-color:#fecaca; color:#991b1b; font-size:0.92rem;">
+             <strong>Đang lọc link ảnh hưởng trên tuyến cáp đang chạy:</strong> ${escapeHtml(filterCable)} — Có <strong>${filtered.length}</strong> link đang hoạt động trên tuyến này.
+           </div>`
+        : "";
+
+      listEl.innerHTML = summaryBanner + filtered.map(link => {
         const routeOrder = ["MAIN", "DP1", "DP2"];
         const history = link.switchHistory || [];
         const isHistOpen = expandedHistoryIds.has(link.id);
-        const activeKey = ["MAIN", "DP1", "DP2"].includes(link.activeRoute) ? link.activeRoute : "MAIN";
+        const activeKey = getActiveRouteKey(link);
         const sysLabel = getLinkSystem(link);
 
         return `
@@ -655,6 +776,7 @@
               </div>
               <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
                 <span class="badge badge-${activeKey}">Đang hoạt động: ${ROUTE_LABELS[activeKey]}</span>
+                ${hasCableFilter ? `<span class="badge badge-impact">Ảnh hưởng tuyến cáp đang chạy</span>` : ""}
                 <select onchange="quickSwitchRoute('${link.id}', this.value, this)" title="Chuyển nhanh phương án đang chạy">
                   <option value="MAIN" ${activeKey === "MAIN" ? "selected" : ""}>Chuyển sang: Chạy chính</option>
                   <option value="DP1" ${activeKey === "DP1" ? "selected" : ""}>Chuyển sang: DP1</option>
@@ -675,14 +797,18 @@
                       <span>${ROUTE_LABELS[rKey]}</span>
                       ${isAct ? `<span class="badge badge-${rKey}">Đang chạy</span>` : ""}
                     </div>
-                    ${hops.length ? hops.map((h, idx) => `
-                      <div class="hop-item">
-                        <div><strong>Trạm ${idx + 1}:</strong> ${escapeHtml(h.station)}</div>
-                        <div><strong>Vị trí ODF:</strong> ${escapeHtml(h.odf)}</div>
-                        ${h.cable ? `<div class="hop-cable">↳ Tuyến cáp: ${escapeHtml(h.cable)}</div>` : ""}
-                        ${h.note ? `<div class="hop-note">Ghi chú: ${escapeHtml(h.note)}</div>` : ""}
-                      </div>
-                    `).join("") : `<div style="color:var(--muted); font-size:0.85rem;">Chưa khai báo trạm</div>`}
+                    ${hops.length ? hops.map((h, idx) => {
+                      const isImpactedHop = isAct && hasCableFilter &&
+                        String(h.cable || "").trim().toLowerCase() === cableTargetLower;
+                      return `
+                        <div class="hop-item ${isImpactedHop ? "hop-impacted" : ""}">
+                          <div><strong>Trạm ${idx + 1}:</strong> ${escapeHtml(h.station)}</div>
+                          <div><strong>Vị trí ODF:</strong> ${escapeHtml(h.odf)}</div>
+                          ${h.cable ? `<div class="hop-cable">↳ Tuyến cáp: ${escapeHtml(h.cable)}</div>` : ""}
+                          ${h.note ? `<div class="hop-note">Ghi chú: ${escapeHtml(h.note)}</div>` : ""}
+                        </div>
+                      `;
+                    }).join("") : `<div style="color:var(--muted); font-size:0.85rem;">Chưa khai báo trạm</div>`}
                   </div>
                 `;
               }).join("")}
@@ -728,7 +854,7 @@
     function exportToJson() {
       const payload = {
         exportedAt: new Date().toISOString(),
-        version: "2.2-firestore-system",
+        version: "2.3-firestore-cable-filter",
         totalLinks: linksCache.length,
         links: linksCache
       };
@@ -1105,6 +1231,7 @@
     document.getElementById("searchInput").oninput = renderLinks;
     document.getElementById("filterSystem").onchange = renderLinks;
     document.getElementById("filterRoute").onchange = renderLinks;
+    document.getElementById("filterCable").onchange = renderLinks;
 
     document.getElementById("linkForm").onsubmit = async (e) => {
       e.preventDefault();
