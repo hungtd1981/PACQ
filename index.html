@@ -49,6 +49,15 @@
       background: rgba(255, 255, 255, 0.16);
       margin-left: 8px;
     }
+    .role-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.22);
+    }
     .user-bar { display: flex; align-items: center; gap: 10px; font-size: 0.9rem; flex-wrap: wrap; }
     .container { max-width: 1180px; margin: 24px auto; padding: 0 16px; }
     .card {
@@ -295,7 +304,7 @@
         <button type="submit" class="btn-primary" style="width:100%;">Đăng nhập</button>
       </form>
       <div id="anonLoginWrap" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
-        <button type="button" class="btn-secondary" id="btnAnonLogin" style="width:100%;">Vào nhanh chế độ khách trạm (Anonymous)</button>
+        <button type="button" class="btn-secondary" id="btnAnonLogin" style="width:100%;">Vào nhanh chế độ khách trạm (Operator)</button>
       </div>
     </div>
   </div>
@@ -316,6 +325,7 @@
         <option value="ALL">Tất cả tuyến cáp (không lọc ảnh hưởng)</option>
       </select>
       <div class="toolbar-group">
+        <button type="button" class="btn-danger btn-sm" id="btnExportImpactedCsv" style="display:none;" title="Xuất nhanh danh sách link ảnh hưởng trên tuyến cáp đang lọc">Xuất CSV link ảnh hưởng</button>
         <button type="button" class="btn-secondary" id="btnExportJson" title="Sao lưu toàn bộ dữ liệu kèm lịch sử">Xuất JSON</button>
         <button type="button" class="btn-secondary" id="btnExportCsv" title="Xuất bảng dữ liệu mở bằng Excel">Xuất CSV</button>
         <button type="button" class="btn-secondary" id="btnOpenImport" title="Khôi phục hoặc nạp dữ liệu từ file JSON/CSV">Nhập file</button>
@@ -452,6 +462,9 @@
       DP1: "Phương án DP1",
       DP2: "Phương án DP2"
     };
+    const ADMIN_EMAILS = [
+      "hungtd1981@gmail.com"
+    ].map(e => e.toLowerCase());
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
@@ -460,6 +473,7 @@
     let unsubscribeSnapshot = null;
     let currentUser = null;
     let linksCache = [];
+    let lastFilteredLinks = [];
     let draftRoutes = { MAIN: [], DP1: [], DP2: [] };
     let expandedHistoryIds = new Set();
 
@@ -483,6 +497,41 @@
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function getUserRole() {
+      if (!currentUser) return "operator";
+      const email = String(currentUser.email || "").trim().toLowerCase();
+      if (email && ADMIN_EMAILS.includes(email)) return "admin";
+      return "operator";
+    }
+
+    function isAdmin() {
+      return getUserRole() === "admin";
+    }
+
+    function syncRolePermissionsUI() {
+      const admin = isAdmin();
+      const replaceOpt = document.querySelector('#importMode option[value="REPLACE"]');
+      const importModeSel = document.getElementById("importMode");
+      if (replaceOpt) {
+        replaceOpt.disabled = !admin;
+        if (!admin && importModeSel && importModeSel.value === "REPLACE") {
+          importModeSel.value = "MERGE";
+        }
+      }
+      updateImpactedExportButton();
+    }
+
+    function updateImpactedExportButton() {
+      const btn = document.getElementById("btnExportImpactedCsv");
+      const filterCable = document.getElementById("filterCable");
+      if (!btn || !filterCable) return;
+      const hasCable = filterCable.value && filterCable.value !== "ALL";
+      btn.style.display = hasCable ? "inline-block" : "none";
+      if (hasCable) {
+        btn.textContent = `Xuất CSV link ảnh hưởng (${lastFilteredLinks.length})`;
+      }
     }
 
     function getActiveRouteKey(item) {
@@ -592,6 +641,7 @@
       } else {
         selectEl.value = "ALL";
       }
+      updateImpactedExportButton();
     }
 
     async function upsertLinkRecord(linkObj) {
@@ -599,6 +649,10 @@
     }
 
     async function deleteLinkRecord(linkId) {
+      if (!isAdmin()) {
+        alert("Tài khoản Operator không có quyền xóa link. Chỉ Admin mới được xóa link.");
+        return;
+      }
       await deleteDoc(doc(db, COLLECTION_NAME, linkId));
     }
 
@@ -666,8 +720,11 @@
         }
       } else {
         const label = getActorName();
+        const role = getUserRole();
+        const roleText = role === "admin" ? "ADMIN (Toàn quyền)" : "OPERATOR (Không xóa link)";
         userBar.innerHTML = `
           <span>Tài khoản: <strong>${escapeHtml(label)}</strong></span>
+          <span class="role-pill">${escapeHtml(roleText)}</span>
           <button type="button" class="btn-sm" id="btnLogout">Đăng xuất</button>
         `;
         document.getElementById("btnLogout").onclick = async () => {
@@ -675,6 +732,7 @@
         };
         loginView.style.display = "none";
         appView.style.display = "block";
+        syncRolePermissionsUI();
         startRealtimeSync();
       }
     }
@@ -690,7 +748,7 @@
       } catch (err) {
         if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential") {
           const shouldCreate = confirm(
-            "Tài khoản chưa tồn tại hoặc thông tin chưa khớp. Bạn có muốn đăng ký mới tài khoản email này để nhập thử không?"
+            "Tài khoản chưa tồn tại hoặc thông tin chưa khớp. Bạn có muốn đăng ký mới tài khoản email này (quyền Operator) để nhập thử không?"
           );
           if (shouldCreate && passVal.length >= 6) {
             try {
@@ -723,6 +781,7 @@
       const listEl = document.getElementById("linksList");
       const hasCableFilter = filterCable && filterCable !== "ALL";
       const cableTargetLower = hasCableFilter ? filterCable.trim().toLowerCase() : "";
+      const admin = isAdmin();
 
       const filtered = linksCache.filter(item => {
         const sysVal = getLinkSystem(item);
@@ -740,6 +799,9 @@
         const matchAffectedCable = isLinkAffectedByCable(item, filterCable);
         return matchText && matchSystem && matchRoute && matchAffectedCable;
       });
+
+      lastFilteredLinks = filtered;
+      updateImpactedExportButton();
 
       if (!filtered.length) {
         const emptyMsg = hasCableFilter
@@ -783,7 +845,7 @@
                   <option value="DP2" ${activeKey === "DP2" ? "selected" : ""}>Chuyển sang: DP2</option>
                 </select>
                 <button type="button" class="btn-sm" onclick="openEditModal('${link.id}')">Sửa</button>
-                <button type="button" class="btn-sm btn-danger" onclick="deleteLink('${link.id}')">Xóa</button>
+                ${admin ? `<button type="button" class="btn-sm btn-danger" onclick="deleteLink('${link.id}')">Xóa</button>` : ""}
               </div>
             </div>
 
@@ -851,10 +913,19 @@
       return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
     }
 
+    function slugifyFilenamePart(str) {
+      return String(str || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9_-]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40) || "tuyen_cap";
+    }
+
     function exportToJson() {
       const payload = {
         exportedAt: new Date().toISOString(),
-        version: "2.3-firestore-cable-filter",
+        version: "2.4-firestore-rbac-cable-export",
         totalLinks: linksCache.length,
         links: linksCache
       };
@@ -869,28 +940,35 @@
       return s;
     }
 
-    function exportToCsv() {
+    function buildCsvFromLinks(sourceLinks, onlyActiveRoute = false, focusCable = "") {
       const headers = [
         "Ten_Link", "Huong_Truyen", "He_Thong", "Phuong_An_Dang_Chay", "Ghi_Chu_Link",
         "Loai_Phuong_An", "Thu_Tu_Tram", "Ten_Tram", "Vi_Tri_ODF", "Tuyen_Cap",
-        "Ghi_Chu_Tram", "Nguoi_Cap_Nhat", "Thoi_Gian_Cap_Nhat"
+        "Anh_Huong_Tuyen_Loc", "Ghi_Chu_Tram", "Nguoi_Cap_Nhat", "Thoi_Gian_Cap_Nhat"
       ];
       const rows = [headers.join(",")];
+      const focusLower = String(focusCable || "").trim().toLowerCase();
 
-      linksCache.forEach(link => {
+      sourceLinks.forEach(link => {
         const sysVal = getLinkSystem(link);
-        ["MAIN", "DP1", "DP2"].forEach(rKey => {
+        const activeKey = getActiveRouteKey(link);
+        const routeKeys = onlyActiveRoute ? [activeKey] : ["MAIN", "DP1", "DP2"];
+
+        routeKeys.forEach(rKey => {
           const hops = (link.routes && link.routes[rKey]) || [];
           if (!hops.length) {
             rows.push([
-              link.linkName, link.direction, sysVal, link.activeRoute, link.note || "",
-              rKey, "", "", "", "", "", link.updatedBy || "", link.updatedAt || ""
+              link.linkName, link.direction, sysVal, activeKey, link.note || "",
+              rKey, "", "", "", "", "", "", link.updatedBy || "", link.updatedAt || ""
             ].map(csvEscape).join(","));
           } else {
             hops.forEach((h, idx) => {
+              const isImpacted = focusLower && rKey === activeKey &&
+                String(h.cable || "").trim().toLowerCase() === focusLower;
               rows.push([
-                link.linkName, link.direction, sysVal, link.activeRoute, link.note || "",
-                rKey, idx + 1, h.station || "", h.odf || "", h.cable || "", h.note || "",
+                link.linkName, link.direction, sysVal, activeKey, link.note || "",
+                rKey, idx + 1, h.station || "", h.odf || "", h.cable || "",
+                isImpacted ? "CO" : "", h.note || "",
                 link.updatedBy || "", link.updatedAt || ""
               ].map(csvEscape).join(","));
             });
@@ -898,9 +976,27 @@
         });
       });
 
-      const blob = new Blob(["\uFEFF" + rows.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      return "\uFEFF" + rows.join("\r\n");
+    }
+
+    function exportToCsv() {
+      const csvContent = buildCsvFromLinks(linksCache, false, "");
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
       downloadBlob(blob, `danh_sach_links_${getTimestampTag()}.csv`);
       showToast(`Đã xuất ${linksCache.length} link ra file CSV.`);
+    }
+
+    function exportImpactedCableCsv() {
+      const selectedCable = document.getElementById("filterCable").value;
+      if (!selectedCable || selectedCable === "ALL") {
+        alert("Vui lòng chọn một tuyến cáp cụ thể trong bộ lọc tuyến cáp trước khi xuất.");
+        return;
+      }
+      const csvContent = buildCsvFromLinks(lastFilteredLinks, true, selectedCable);
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+      const cableSlug = slugifyFilenamePart(selectedCable);
+      downloadBlob(blob, `link_anh_huong_${cableSlug}_${getTimestampTag()}.csv`);
+      showToast(`Đã xuất ${lastFilteredLinks.length} link ảnh hưởng trên tuyến cáp "${selectedCable}".`);
     }
 
     function parseCsvText(text) {
@@ -1021,7 +1117,11 @@
 
     async function handleImportConfirm() {
       const fileInput = document.getElementById("importFileInput");
-      const mode = document.getElementById("importMode").value;
+      let mode = document.getElementById("importMode").value;
+      if (mode === "REPLACE" && !isAdmin()) {
+        alert("Tài khoản Operator chỉ được phép Gộp & Cập nhật, không được Ghi đè toàn bộ.");
+        mode = "MERGE";
+      }
       const file = fileInput.files && fileInput.files[0];
       if (!file) {
         alert("Vui lòng chọn một file .json hoặc .csv trước khi nhập.");
@@ -1134,6 +1234,10 @@
     };
 
     window.deleteLink = async function(linkId) {
+      if (!isAdmin()) {
+        alert("Tài khoản Operator không có quyền xóa link. Chỉ Admin mới được xóa link.");
+        return;
+      }
       if (!confirm("Bạn có chắc muốn xóa link này khỏi hệ thống?")) return;
       await deleteLinkRecord(linkId);
       showToast("Đã xóa link.");
@@ -1222,9 +1326,13 @@
     document.getElementById("btnOpenCreate").onclick = openCreateModal;
     document.getElementById("btnCloseModal").onclick = closeModal;
     document.getElementById("btnCancelModal").onclick = closeModal;
+    document.getElementById("btnExportImpactedCsv").onclick = exportImpactedCableCsv;
     document.getElementById("btnExportJson").onclick = exportToJson;
     document.getElementById("btnExportCsv").onclick = exportToCsv;
-    document.getElementById("btnOpenImport").onclick = () => document.getElementById("importModal").classList.add("open");
+    document.getElementById("btnOpenImport").onclick = () => {
+      syncRolePermissionsUI();
+      document.getElementById("importModal").classList.add("open");
+    };
     document.getElementById("btnCloseImport").onclick = () => document.getElementById("importModal").classList.remove("open");
     document.getElementById("btnCancelImport").onclick = () => document.getElementById("importModal").classList.remove("open");
     document.getElementById("btnConfirmImport").onclick = handleImportConfirm;
