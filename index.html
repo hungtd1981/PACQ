@@ -446,4 +446,531 @@
       const el = document.getElementById("toast");
       el.textContent = msg;
       el.style.display = "block";
-      clearTimeout(window._toast
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => { el.style.display = "none"; }, 3500);
+    }
+
+    function setSyncBadge(text, isLive) {
+      const el = document.getElementById("syncStatus");
+      el.textContent = text;
+      el.style.background = isLive ? "rgba(34, 197, 94, 0.28)" : "rgba(255, 255, 255, 0.16)";
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function normalizeDocRecord(docId, rawData) {
+      const src = (rawData && typeof rawData === "object") ? rawData : {};
+      const validActive = ["MAIN", "DP1", "DP2"].includes(src.activeRoute) ? src.activeRoute : "MAIN";
+      const routes = { MAIN: [], DP1: [], DP2: [] };
+
+      ["MAIN", "DP1", "DP2"].forEach(k => {
+        const list = (src.routes && Array.isArray(src.routes[k])) ? src.routes[k] : [];
+        routes[k] = list.map(h => {
+          const hop = (h && typeof h === "object") ? h : {};
+          return {
+            station: String(hop.station ?? "").trim(),
+            odf: String(hop.odf ?? "").trim(),
+            cable: String(hop.cable ?? "").trim(),
+            note: String(hop.note ?? "").trim()
+          };
+        });
+      });
+
+      const history = Array.isArray(src.switchHistory)
+        ? src.switchHistory.filter(h => h && typeof h === "object")
+        : [];
+
+      return {
+        id: String(src.id || docId),
+        linkName: String(src.linkName ?? "").trim(),
+        direction: String(src.direction ?? "").trim(),
+        system: String(src.system ?? "").trim(),
+        activeRoute: validActive,
+        note: String(src.note ?? "").trim(),
+        updatedBy: String(src.updatedBy ?? "").trim(),
+        updatedAt: String(src.updatedAt ?? "").trim(),
+        routes,
+        switchHistory: history
+      };
+    }
+
+    function getLinkSystem(item) {
+      return String(item && item.system ? item.system : "").trim();
+    }
+
+    function getActorName() {
+      if (!currentUser) return "system";
+      return currentUser.email || (currentUser.isAnonymous ? "Khách trạm" : "user");
+    }
+
+    function getKnownSystems() {
+      return Array.from(
+        new Set(linksCache.map(item => getLinkSystem(item)).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b, "vi"));
+    }
+
+    function refreshSystemSuggestions() {
+      const dl = document.getElementById("systemSuggestions");
+      if (!dl) return;
+      const systems = getKnownSystems();
+      dl.innerHTML = systems
+        .map(sys => `<option value="${escapeHtml(sys)}"></option>`)
+        .join("");
+    }
+
+    function refreshSystemFilterOptions() {
+      const selectEl = document.getElementById("filterSystem");
+      if (!selectEl) return;
+      const currentVal = selectEl.value;
+      const systems = getKnownSystems();
+
+      selectEl.innerHTML = `<option value="ALL">Tất cả hệ thống</option>` + systems
+        .map(sys => `<option value="${escapeHtml(sys)}">${escapeHtml(sys)}</option>`)
+        .join("");
+
+      if (currentVal === "ALL" || systems.includes(currentVal)) {
+        selectEl.value = currentVal;
+      } else {
+        selectEl.value = "ALL";
+      }
+
+      refreshSystemSuggestions();
+    }
+
+    async function upsertLinkRecord(linkObj) {
+      await setDoc(doc(db, COLLECTION_NAME, linkObj.id), linkObj);
+    }
+
+    async function deleteLinkRecord(linkId) {
+      await deleteDoc(doc(db, COLLECTION_NAME, linkId));
+    }
+
+    async function replaceAllLinksRecord(newList) {
+      const batch = writeBatch(db);
+      const existingIds = new Set(linksCache.map(l => l.id));
+      const nextIds = new Set(newList.map(l => l.id));
+
+      existingIds.forEach(oldId => {
+        if (!nextIds.has(oldId)) {
+          batch.delete(doc(db, COLLECTION_NAME, oldId));
+        }
+      });
+      newList.forEach(item => {
+        batch.set(doc(db, COLLECTION_NAME, item.id), item);
+      });
+      await batch.commit();
+    }
+
+    function startRealtimeSync() {
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+        unsubscribeSnapshot = null;
+      }
+
+      setSyncBadge("Đang kết nối...", false);
+      const colRef = collection(db, COLLECTION_NAME);
+      unsubscribeSnapshot = onSnapshot(
+        colRef,
+        (snap) => {
+          setSyncBadge("Đang đồng bộ Firestore", true);
+          const rows = [];
+          snap.forEach(d => {
+            try {
+              rows.push(normalizeDocRecord(d.id, d.data()));
+            } catch (docErr) {
+              console.warn("Bỏ qua bản ghi lỗi định dạng:", d.id, docErr);
+            }
+          });
+          rows.sort((a, b) => String(b.id).localeCompare(String(a.id)));
+          linksCache = rows;
+
+          try {
+            refreshSystemFilterOptions();
+          } catch (filterErr) {
+            console.error(filterErr);
+          }
+
+          try {
+            renderLinks();
+          } catch (renderErr) {
+            console.error(renderErr);
+            document.getElementById("linksList").innerHTML =
+              `<div class="card" style="color:#b91c1c;">Lỗi hiển thị danh sách: ${escapeHtml(renderErr.message)}</div>`;
+          }
+        },
+        (err) => {
+          console.error(err);
+          setSyncBadge("Lỗi đồng bộ Firestore", false);
+          showToast("Lỗi đồng bộ Firestore: " + err.message);
+        }
+      );
+    }
+
+    function renderAuthUI() {
+      const userBar = document.getElementById("userBar");
+      const loginView = document.getElementById("loginView");
+      const appView = document.getElementById("appView");
+
+      if (!currentUser) {
+        userBar.innerHTML = "";
+        loginView.style.display = "block";
+        appView.style.display = "none";
+        if (unsubscribeSnapshot) {
+          unsubscribeSnapshot();
+          unsubscribeSnapshot = null;
+        }
+      } else {
+        const label = getActorName();
+        userBar.innerHTML = `
+          <span>Tài khoản: <strong>${escapeHtml(label)}</strong></span>
+          <button type="button" class="btn-sm" id="btnLogout">Đăng xuất</button>
+        `;
+        document.getElementById("btnLogout").onclick = async () => {
+          await signOut(auth);
+        };
+        loginView.style.display = "none";
+        appView.style.display = "block";
+        startRealtimeSync();
+      }
+    }
+
+    document.getElementById("loginForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const idVal = document.getElementById("loginUser").value.trim();
+      const passVal = document.getElementById("loginPass").value;
+      if (!idVal) return;
+
+      try {
+        await signInWithEmailAndPassword(auth, idVal, passVal);
+      } catch (err) {
+        if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential") {
+          const shouldCreate = confirm(
+            "Tài khoản chưa tồn tại hoặc thông tin chưa khớp. Bạn có muốn đăng ký mới tài khoản email này để nhập thử không?"
+          );
+          if (shouldCreate && passVal.length >= 6) {
+            try {
+              await createUserWithEmailAndPassword(auth, idVal, passVal);
+            } catch (regErr) {
+              alert("Đăng ký thất bại: " + regErr.message);
+            }
+          } else if (shouldCreate) {
+            alert("Mật khẩu cần ít nhất 6 ký tự để tạo tài khoản mới.");
+          }
+        } else {
+          alert("Lỗi đăng nhập: " + err.message);
+        }
+      }
+    };
+
+    document.getElementById("btnAnonLogin").onclick = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        alert("Không thể đăng nhập khách (hãy bật Anonymous trong Firebase Authentication): " + err.message);
+      }
+    };
+
+    function renderLinks() {
+      const q = document.getElementById("searchInput").value.trim().toLowerCase();
+      const filterSystem = document.getElementById("filterSystem").value;
+      const filterRoute = document.getElementById("filterRoute").value;
+      const listEl = document.getElementById("linksList");
+
+      const filtered = linksCache.filter(item => {
+        const sysVal = getLinkSystem(item);
+        const matchText =
+          String(item.linkName || "").toLowerCase().includes(q) ||
+          String(item.direction || "").toLowerCase().includes(q) ||
+          sysVal.toLowerCase().includes(q) ||
+          String(item.note || "").toLowerCase().includes(q);
+        const matchSystem = filterSystem === "ALL" || sysVal === filterSystem;
+        const matchRoute = filterRoute === "ALL" || item.activeRoute === filterRoute;
+        return matchText && matchSystem && matchRoute;
+      });
+
+      if (!filtered.length) {
+        listEl.innerHTML = `<div class="card" style="text-align:center; color:var(--muted);">Chưa có link hoặc không tìm thấy link phù hợp.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = filtered.map(link => {
+        const routeOrder = ["MAIN", "DP1", "DP2"];
+        const history = link.switchHistory || [];
+        const isHistOpen = expandedHistoryIds.has(link.id);
+        const activeKey = ["MAIN", "DP1", "DP2"].includes(link.activeRoute) ? link.activeRoute : "MAIN";
+        const sysLabel = getLinkSystem(link);
+
+        return `
+          <div class="link-card is-active-route">
+            <div class="link-header">
+              <div>
+                <h3 class="link-title">${escapeHtml(link.linkName)}</h3>
+                <div class="link-meta">
+                  <strong>Hướng truyền:</strong> ${escapeHtml(link.direction)}
+                  ${sysLabel ? ` • <strong>Hệ thống:</strong> ${escapeHtml(sysLabel)}` : ""} •
+                  Cập nhật: ${escapeHtml(link.updatedAt || "")} (${escapeHtml(link.updatedBy || "")})
+                </div>
+                ${link.note ? `<div class="link-note"><strong>Ghi chú:</strong> ${escapeHtml(link.note)}</div>` : ""}
+              </div>
+              <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+                <span class="badge badge-${activeKey}">Đang hoạt động: ${ROUTE_LABELS[activeKey]}</span>
+                <select onchange="quickSwitchRoute('${escapeHtml(link.id)}', this.value, this)" title="Chuyển nhanh phương án đang chạy">
+                  <option value="MAIN" ${activeKey === "MAIN" ? "selected" : ""}>Chuyển sang: Chạy chính</option>
+                  <option value="DP1" ${activeKey === "DP1" ? "selected" : ""}>Chuyển sang: DP1</option>
+                  <option value="DP2" ${activeKey === "DP2" ? "selected" : ""}>Chuyển sang: DP2</option>
+                </select>
+                <button type="button" class="btn-sm" onclick="openEditModal('${escapeHtml(link.id)}')">Sửa</button>
+                <button type="button" class="btn-sm btn-danger" onclick="deleteLink('${escapeHtml(link.id)}')">Xóa</button>
+              </div>
+            </div>
+
+            <div class="routes-grid">
+              ${routeOrder.map(rKey => {
+                const hops = (link.routes && link.routes[rKey]) || [];
+                const isAct = activeKey === rKey;
+                return `
+                  <div class="route-box ${isAct ? "active-box" : ""}">
+                    <div class="route-box-head">
+                      <span>${ROUTE_LABELS[rKey]}</span>
+                      ${isAct ? `<span class="badge badge-${rKey}">Đang chạy</span>` : ""}
+                    </div>
+                    ${hops.length ? hops.map((h, idx) => `
+                      <div class="hop-item">
+                        <div><strong>Trạm ${idx + 1}:</strong> ${escapeHtml(h.station)}</div>
+                        <div><strong>Vị trí ODF:</strong> ${escapeHtml(h.odf)}</div>
+                        ${h.cable ? `<div class="hop-cable">↳ Tuyến cáp: ${escapeHtml(h.cable)}</div>` : ""}
+                        ${h.note ? `<div class="hop-note">Ghi chú: ${escapeHtml(h.note)}</div>` : ""}
+                      </div>
+                    `).join("") : `<div style="color:var(--muted); font-size:0.85rem;">Chưa khai báo trạm</div>`}
+                  </div>
+                `;
+              }).join("")}
+            </div>
+
+            <div class="history-panel">
+              <button type="button" class="btn-sm" onclick="toggleHistory('${escapeHtml(link.id)}')">
+                ${isHistOpen ? "Ẩn lịch sử chuyển đổi" : "Xem lịch sử chuyển đổi"} (${history.length})
+              </button>
+              ${isHistOpen ? `
+                <div class="history-list">
+                  ${history.length ? history.map(h => `
+                    <div class="history-item">
+                      <div><strong>${escapeHtml(h.time)}</strong> • <em>${escapeHtml(h.user)}</em> — <strong>${escapeHtml(h.summary)}</strong></div>
+                      ${h.reason ? `<div style="color:var(--muted);">Lý do / Ghi chú: ${escapeHtml(h.reason)}</div>` : ""}
+                    </div>
+                  `).join("") : `<div style="color:var(--muted);">Chưa có lịch sử chuyển đổi.</div>`}
+                </div>
+              ` : ""}
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function getTimestampTag() {
+      const d = new Date();
+      const pad = n => String(n).padStart(2, "0");
+      return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+    }
+
+    function exportToJson() {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        version: "2.3-firestore-safe",
+        totalLinks: linksCache.length,
+        links: linksCache
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+      downloadBlob(blob, `backup_links_${getTimestampTag()}.json`);
+      showToast(`Đã xuất ${linksCache.length} link ra file JSON.`);
+    }
+
+    function csvEscape(val) {
+      const s = String(val ?? "");
+      if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    }
+
+    function exportToCsv() {
+      const headers = [
+        "Ten_Link", "Huong_Truyen", "He_Thong", "Phuong_An_Dang_Chay", "Ghi_Chu_Link",
+        "Loai_Phuong_An", "Thu_Tu_Tram", "Ten_Tram", "Vi_Tri_ODF", "Tuyen_Cap",
+        "Ghi_Chu_Tram", "Nguoi_Cap_Nhat", "Thoi_Gian_Cap_Nhat"
+      ];
+      const rows = [headers.join(",")];
+
+      linksCache.forEach(link => {
+        const sysVal = getLinkSystem(link);
+        ["MAIN", "DP1", "DP2"].forEach(rKey => {
+          const hops = (link.routes && link.routes[rKey]) || [];
+          if (!hops.length) {
+            rows.push([
+              link.linkName, link.direction, sysVal, link.activeRoute, link.note || "",
+              rKey, "", "", "", "", "", link.updatedBy || "", link.updatedAt || ""
+            ].map(csvEscape).join(","));
+          } else {
+            hops.forEach((h, idx) => {
+              rows.push([
+                link.linkName, link.direction, sysVal, link.activeRoute, link.note || "",
+                rKey, idx + 1, h.station || "", h.odf || "", h.cable || "", h.note || "",
+                link.updatedBy || "", link.updatedAt || ""
+              ].map(csvEscape).join(","));
+            });
+          }
+        });
+      });
+
+      const blob = new Blob(["\uFEFF" + rows.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      downloadBlob(blob, `danh_sach_links_${getTimestampTag()}.csv`);
+      showToast(`Đã xuất ${linksCache.length} link ra file CSV.`);
+    }
+
+    function parseCsvText(text) {
+      const clean = text.replace(/^\uFEFF/, "");
+      const rows = [];
+      let row = [];
+      let cur = "";
+      let inQuotes = false;
+      for (let i = 0; i < clean.length; i++) {
+        const ch = clean[i];
+        const next = clean[i + 1];
+        if (inQuotes) {
+          if (ch === '"' && next === '"') { cur += '"'; i++; }
+          else if (ch === '"') { inQuotes = false; }
+          else { cur += ch; }
+        } else {
+          if (ch === '"') { inQuotes = true; }
+          else if (ch === ",") { row.push(cur); cur = ""; }
+          else if (ch === "\r" && next === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; i++; }
+          else if (ch === "\n" || ch === "\r") { row.push(cur); rows.push(row); row = []; cur = ""; }
+          else { cur += ch; }
+        }
+      }
+      if (cur.length > 0 || row.length > 0) { row.push(cur); rows.push(row); }
+      return rows.filter(r => r.some(cell => cell.trim() !== ""));
+    }
+
+    function normalizeImportedLinks(rawList, actor) {
+      const nowStr = new Date().toLocaleString("vi-VN");
+      return rawList
+        .filter(item => item && String(item.linkName || "").trim())
+        .map((item, index) => {
+          const norm = normalizeDocRecord(item.id || `lnk-${Date.now()}-${index}`, item);
+          return {
+            ...norm,
+            updatedBy: norm.updatedBy || actor,
+            updatedAt: norm.updatedAt || nowStr,
+            switchHistory: norm.switchHistory.length
+              ? norm.switchHistory
+              : [{
+                  time: nowStr,
+                  user: actor,
+                  fromRoute: null,
+                  toRoute: norm.activeRoute,
+                  summary: `Nhập dữ liệu từ file (${ROUTE_LABELS[norm.activeRoute]})`,
+                  reason: "Import file backup"
+                }]
+          };
+        });
+    }
+
+    function csvRowsToLinks(rows, actor) {
+      if (rows.length < 2) return [];
+      const headers = rows[0].map(h => h.trim());
+      const idx = name => headers.indexOf(name);
+      const mapByLinkName = new Map();
+      const nowStr = new Date().toLocaleString("vi-VN");
+
+      for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const linkName = (r[idx("Ten_Link")] || "").trim();
+        if (!linkName) continue;
+
+        if (!mapByLinkName.has(linkName)) {
+          const rawActive = (r[idx("Phuong_An_Dang_Chay")] || "MAIN").trim().toUpperCase();
+          const activeRoute = ["MAIN", "DP1", "DP2"].includes(rawActive) ? rawActive : "MAIN";
+          const sysCol = idx("He_Thong");
+          mapByLinkName.set(linkName, {
+            id: `lnk-${Date.now()}-${mapByLinkName.size}`,
+            linkName,
+            direction: (r[idx("Huong_Truyen")] || "").trim(),
+            system: sysCol >= 0 ? (r[sysCol] || "").trim() : "",
+            activeRoute,
+            note: (r[idx("Ghi_Chu_Link")] || "").trim(),
+            updatedBy: (r[idx("Nguoi_Cap_Nhat")] || actor).trim(),
+            updatedAt: (r[idx("Thoi_Gian_Cap_Nhat")] || nowStr).trim(),
+            routes: { MAIN: [], DP1: [], DP2: [] },
+            switchHistory: [{
+              time: nowStr,
+              user: actor,
+              fromRoute: null,
+              toRoute: activeRoute,
+              summary: `Nhập từ file CSV (${ROUTE_LABELS[activeRoute]})`,
+              reason: "Import CSV"
+            }]
+          });
+        }
+
+        const entry = mapByLinkName.get(linkName);
+        const routeType = (r[idx("Loai_Phuong_An")] || "").trim().toUpperCase();
+        const station = (r[idx("Ten_Tram")] || "").trim();
+        const odf = (r[idx("Vi_Tri_ODF")] || "").trim();
+        const cable = (r[idx("Tuyen_Cap")] || "").trim();
+        const hopNote = (r[idx("Ghi_Chu_Tram")] || "").trim();
+
+        if (["MAIN", "DP1", "DP2"].includes(routeType) && (station || odf || cable || hopNote)) {
+          entry.routes[routeType].push({ station, odf, cable, note: hopNote });
+        }
+      }
+      return Array.from(mapByLinkName.values());
+    }
+
+    async function handleImportConfirm() {
+      const fileInput = document.getElementById("importFileInput");
+      const mode = document.getElementById("importMode").value;
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        alert("Vui lòng chọn một file .json hoặc .csv trước khi nhập.");
+        return;
+      }
+
+      const actor = getActorName();
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const text = String(reader.result || "");
+          let importedLinks = [];
+          if (file.name.toLowerCase().endsWith(".json")) {
+            const parsed = JSON.parse(text);
+            const list = Array.isArray(parsed) ? parsed : parsed.links;
+            if (!Array.isArray(list)) throw new Error("Cấu trúc JSON không hợp lệ.");
+            importedLinks = normalizeImportedLinks(list, actor);
+          } else {
+            const rows = parseCsvText(text);
+            importedLinks = csvRowsToLinks(rows, actor);
+          }
+
+          if (!importedLinks.length) {
+            alert("Không tìm thấy bản ghi link hợp lệ trong file.");
+            return;
+          }
+
+          if (mode === "REPLACE") {
+            await replaceAllLinksRecord(importedLinks);
